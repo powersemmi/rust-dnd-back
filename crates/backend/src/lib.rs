@@ -5,7 +5,7 @@ pub mod state;
 pub mod handler;
 
 pub use config::Config;
-use shared::events::{ChatMessagePayload, ClientEvent, MouseMoveTokenPayload};
+use shared::events::{ChatMessagePayload, ClientEvent, MouseMovePayload};
 pub use state::AppState;
 use utoipa::OpenApi;
 
@@ -20,7 +20,7 @@ use utoipa::OpenApi;
         schemas(
             ClientEvent,
             ChatMessagePayload,
-            MouseMoveTokenPayload
+            MouseMovePayload
         )
     ),
     tags(

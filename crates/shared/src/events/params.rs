@@ -1,10 +1,13 @@
 use serde::Deserialize;
 #[cfg(feature = "schemas")]
 use utoipa::{IntoParams, ToSchema};
+#[cfg(feature = "validation")]
 use validator::Validate;
 
-#[derive(Debug, Deserialize, Validate, IntoParams, ToSchema)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "validation", derive(Validate))]
+#[cfg_attr(feature = "schemas", derive(ToSchema, IntoParams))]
 pub struct Params {
-    #[validate(length(min = 1, max = 255))]
+    #[cfg_attr(feature = "validation", validate(length(min = 1, max = 255)))]
     pub room_id: String,
 }

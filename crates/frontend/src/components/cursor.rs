@@ -1,0 +1,39 @@
+use crate::config;
+use leptos::prelude::*;
+
+/// Компонент одного курсора
+#[component]
+pub fn Cursor(
+    username: String,
+    #[prop(into)] x: Signal<i32>,
+    #[prop(into)] y: Signal<i32>,
+    is_me: bool,
+) -> impl IntoView {
+    let color = if is_me {
+        config::MY_CURSOR_COLOR
+    } else {
+        config::OTHER_CURSOR_COLOR
+    };
+
+    let style = move || {
+        format!(
+            "position: absolute; left: {}px; top: {}px; pointer-events: none; transition: {}; z-index: 100;",
+            x.get(),
+            y.get(),
+            config::CURSOR_TRANSITION
+        )
+    };
+
+    view! {
+        <div style=style>
+            // Стрелочка курсора
+            <svg width={config::CURSOR_SIZE.to_string()} height={config::CURSOR_SIZE.to_string()} viewBox="0 0 24 24" fill={color}>
+                <path d="M7 2l12 11.2-5.8.5 3.3 7.3-2.2.9-3.2-7.4-4.4 4z"/>
+            </svg>
+            // Никнейм
+            <span style="background: rgba(0,0,0,0.7); color: white; padding: 2px 5px; border-radius: 4px; font-size: 12px;">
+                {username}
+            </span>
+        </div>
+    }
+}

@@ -5,9 +5,12 @@ edition = "2024"
 
 [dependencies]
 utoipa = { version = "5.4.0", features = ["uuid"], optional = true }
-validator = { version = "0.20.0", features = ["derive"]}
+validator = { version = "0.20.0", features = ["derive"], default-features = false, optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 
 [features]
 # Фича "schemas" включает зависимость utoipa
 schemas = ["dep:utoipa"]
+# Фича "validation" включает валидатор (не для WASM)
+validation = ["dep:validator"]
+default = ["validation"]
