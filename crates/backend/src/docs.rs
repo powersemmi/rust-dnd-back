@@ -1,5 +1,4 @@
-use crate::handlers::Params;
-use crate::handlers::events::ClientEvent;
+use shared::events::{ClientEvent, Params};
 
 /// WebSocket Protocol Definition
 ///

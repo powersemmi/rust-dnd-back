@@ -1,4 +1,5 @@
 use serde::Deserialize;
+#[cfg(feature = "schemas")]
 use utoipa::ToSchema;
 use validator::Validate;
 

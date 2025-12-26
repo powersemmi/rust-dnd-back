@@ -5,3 +5,39 @@ services:
       - 6379:6379
     security_opt:
       - no-new-privileges:true
+    networks:
+      - dev-network
+
+  backend:
+    build:
+      context: .
+      target: backend
+    environment:
+      - RUST_BACKTRACE=1
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=3000
+      - REDIS_URL=redis://redis:6379
+      - RUST_LOG=debug
+    ports:
+      - "3000:3000"
+    networks:
+      - dev-network
+
+#  frontend:
+#    build:
+#      context: .
+#      target: frontend
+#    ports:
+#      - "8080:8080"
+#    environment:
+#      - RUST_BACKTRACE=1
+#      - SERVER_HOST=localhost
+#      - SERVER_PORT=3000
+#      - BACKEND_URL=http://backend:3000
+#      - RUST_LOG=debug
+#    networks:
+#      - dev-network
+
+
+networks:
+  dev-network:

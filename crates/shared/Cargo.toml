@@ -1,0 +1,13 @@
+[package]
+name = "shared"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+utoipa = { version = "5.4.0", features = ["uuid"], optional = true }
+validator = { version = "0.20.0", features = ["derive"]}
+serde = { version = "1.0.228", features = ["derive"] }
+
+[features]
+# Фича "schemas" включает зависимость utoipa
+schemas = ["dep:utoipa"]

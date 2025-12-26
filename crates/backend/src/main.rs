@@ -1,6 +1,6 @@
 use axum::Router;
 use axum::routing::get;
-use dnd_back::{ApiDoc, Config, handlers, state};
+use backend::{ApiDoc, Config, handler, state};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -26,7 +26,7 @@ async fn main() {
 
     let router = Router::new()
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
-        .route("/ws/room", get(handlers::ws_handler))
+        .route("/ws/room", get(handler::ws_handler))
         .with_state(Arc::from(state));
 
     let addr: SocketAddr = SocketAddr::from((config.server_addr.ip(), config.server_addr.port()));

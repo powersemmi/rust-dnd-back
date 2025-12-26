@@ -1,10 +1,11 @@
 pub mod config;
 pub mod docs;
-pub mod handlers;
 pub mod state;
 
-use crate::handlers::events::{ChatMessagePayload, ClientEvent, MouseMoveTokenPayload};
+pub mod handler;
+
 pub use config::Config;
+use shared::events::{ChatMessagePayload, ClientEvent, MouseMoveTokenPayload};
 pub use state::AppState;
 use utoipa::OpenApi;
 

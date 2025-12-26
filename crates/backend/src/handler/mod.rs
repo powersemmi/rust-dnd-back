@@ -1,23 +1,13 @@
-pub(crate) mod events;
-
-use crate::handlers::events::ClientEvent;
 use crate::state::AppState;
 use axum::extract::ws::{Message, Utf8Bytes, WebSocket};
 use axum::extract::{Query, State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
-use serde::Deserialize;
+use shared::events::{ClientEvent, Params};
 use std::string::String;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
-use utoipa::IntoParams;
-
-#[derive(Deserialize, IntoParams)]
-pub struct Params {
-    /// ID комнаты, к которой нужно подключиться
-    room_id: String,
-}
 
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
