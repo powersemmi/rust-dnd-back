@@ -1,0 +1,9 @@
+WEBSOCKET ws://127.0.0.1:3000/ws/room?room_id=1
+Content-Type: application/json
+
+{
+  "message": "Hello, server!",
+  "repeat": 3
+}
+
+=== wait-for-server

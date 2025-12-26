@@ -1,0 +1,5 @@
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+ar = "x86_64-w64-mingw32-gcc-ar"
+# Опционально: чтобы exe запускался без таскания за собой libgcc_s_seh-1.dll и прочих
+rustflags = ["-C", "link-args=-static"]
