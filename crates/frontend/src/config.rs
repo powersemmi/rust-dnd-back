@@ -12,6 +12,20 @@ pub struct Theme {
     pub mouse_throttle_ms: u64,
     pub background_color: &'static str,
     pub cursor_transition: &'static str,
+    // Auth form colors
+    pub auth_form_bg: &'static str,
+    pub auth_input_bg: &'static str,
+    pub auth_input_border: &'static str,
+    pub auth_input_text: &'static str,
+    pub auth_error_bg: &'static str,
+    pub auth_error_border: &'static str,
+    pub auth_error_text: &'static str,
+    pub auth_success_bg: &'static str,
+    pub auth_success_border: &'static str,
+    pub auth_success_text: &'static str,
+    pub auth_button_login: &'static str,
+    pub auth_button_register: &'static str,
+    pub auth_button_room: &'static str,
 }
 
 #[derive(Clone)]
@@ -68,6 +82,19 @@ impl Default for Theme {
             mouse_throttle_ms: parse_u64(MOUSE_THROTTLE_MS_STR),
             background_color: env!("BACKGROUND_COLOR"),
             cursor_transition: env!("CURSOR_TRANSITION"),
+            auth_form_bg: env!("AUTH_FORM_BG"),
+            auth_input_bg: env!("AUTH_INPUT_BG"),
+            auth_input_border: env!("AUTH_INPUT_BORDER"),
+            auth_input_text: env!("AUTH_INPUT_TEXT"),
+            auth_error_bg: env!("AUTH_ERROR_BG"),
+            auth_error_border: env!("AUTH_ERROR_BORDER"),
+            auth_error_text: env!("AUTH_ERROR_TEXT"),
+            auth_success_bg: env!("AUTH_SUCCESS_BG"),
+            auth_success_border: env!("AUTH_SUCCESS_BORDER"),
+            auth_success_text: env!("AUTH_SUCCESS_TEXT"),
+            auth_button_login: env!("AUTH_BUTTON_LOGIN"),
+            auth_button_register: env!("AUTH_BUTTON_REGISTER"),
+            auth_button_room: env!("AUTH_BUTTON_ROOM"),
         }
     }
 }

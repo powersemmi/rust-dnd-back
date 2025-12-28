@@ -9,14 +9,48 @@ use wasm_bindgen_futures::spawn_local;
 
 use super::chat::ChatWindow;
 use super::cursor::Cursor;
+use super::login::LoginForm;
+use super::register::RegisterForm;
+use super::room_selector::RoomSelector;
 use super::side_menu::SideMenu;
 use super::websocket::{CursorSignals, WsSender, connect_websocket};
 
+#[derive(Clone, Copy, PartialEq)]
+enum AppState {
+    Login,
+    Register,
+    RoomSelection,
+    Connected,
+}
+
 #[component]
 pub fn App() -> impl IntoView {
-    // 1. Состояние приложения
-    let (is_connected, set_is_connected) = signal(false);
-    let (my_username, set_my_username) = signal(String::new());
+    // Конфигурация
+    let cfg = StoredValue::new(config::Config::default());
+    let theme = StoredValue::new(cfg.get_value().theme.clone());
+    let back_url = cfg.get_value().api.back_url;
+    let api_path = cfg.get_value().api.api_path;
+
+    // Проверяем наличие токена в localStorage при загрузке
+    let initial_state = if let Some(window) = web_sys::window() {
+        if let Ok(Some(storage)) = window.local_storage() {
+            if storage.get_item("jwt_token").ok().flatten().is_some() {
+                AppState::RoomSelection
+            } else {
+                AppState::Login
+            }
+        } else {
+            AppState::Login
+        }
+    } else {
+        AppState::Login
+    };
+
+    // Состояние приложения
+    let (app_state, set_app_state) = signal(initial_state);
+    let (jwt_token, set_jwt_token) = signal(String::new());
+    let (username, set_username) = signal(String::new());
+    let (room_id, set_room_id) = signal(String::new());
 
     // Хранилище всех курсоров
     let (cursors, set_cursors) = signal(HashMap::<String, CursorSignals>::new());
@@ -31,20 +65,53 @@ pub fn App() -> impl IntoView {
     let is_menu_open = RwSignal::new(false);
     let is_chat_open = RwSignal::new(false);
 
-    // Конфигурация
-    let cfg = StoredValue::new(config::Config::default());
-    let theme = StoredValue::new(cfg.get_value().theme.clone());
-
-    // 2. Функция подключения (вызывается по кнопке)
-    let on_connect = move || {
-        let username = my_username.get();
-        if username.is_empty() {
-            return;
+    // Загружаем токен и username из localStorage если есть
+    if initial_state == AppState::RoomSelection {
+        if let Some(window) = web_sys::window() {
+            if let Ok(Some(storage)) = window.local_storage() {
+                if let Ok(Some(token)) = storage.get_item("jwt_token") {
+                    set_jwt_token.set(token);
+                }
+                if let Ok(Some(user)) = storage.get_item("username") {
+                    set_username.set(user);
+                }
+            }
         }
+    }
 
-        set_is_connected.set(true);
+    // Callbacks для навигации между экранами
+    let on_login_success = move |token: String| {
+        set_jwt_token.set(token);
+        if let Some(window) = web_sys::window() {
+            if let Ok(Some(storage)) = window.local_storage() {
+                if let Ok(Some(user)) = storage.get_item("username") {
+                    set_username.set(user);
+                }
+            }
+        }
+        set_app_state.set(AppState::RoomSelection);
+    };
+
+    let on_registered = move |_| {
+        set_app_state.set(AppState::Login);
+    };
+
+    let on_switch_to_register = move |_| {
+        set_app_state.set(AppState::Register);
+    };
+
+    let on_switch_to_login = move |_| {
+        set_app_state.set(AppState::Login);
+    };
+
+    let on_room_selected = move |selected_room_id: String| {
+        set_room_id.set(selected_room_id.clone());
+        set_app_state.set(AppState::Connected);
+
+        // Подключаемся к WebSocket
         connect_websocket(
-            username,
+            selected_room_id,
+            jwt_token.get(),
             set_ws_sender,
             set_cursors,
             messages,
@@ -52,23 +119,23 @@ pub fn App() -> impl IntoView {
         );
     };
 
-    // 3. Обработчик движения мыши (отправляем свои данные)
+    // Обработчик движения мыши (отправляем свои данные)
     let on_mouse_move = move |ev: leptos::web_sys::MouseEvent| {
-        if !is_connected.get() {
+        if app_state.get() != AppState::Connected {
             return;
         }
 
         let x = ev.client_x();
         let y = ev.client_y();
-        let username = my_username.get();
+        let user = username.get();
 
         // Сразу обновляем СВОЙ курсор локально (чтобы не ждать пинга от сервера)
         set_cursors.update(|map| {
-            if let Some((sig_x, sig_y)) = map.get(&username) {
+            if let Some((sig_x, sig_y)) = map.get(&user) {
                 sig_x.set(x);
                 sig_y.set(y);
             } else {
-                map.insert(username.clone(), (RwSignal::new(x), RwSignal::new(y)));
+                map.insert(user.clone(), (RwSignal::new(x), RwSignal::new(y)));
             }
         });
 
@@ -91,7 +158,7 @@ pub fn App() -> impl IntoView {
                 x,
                 y,
                 mouse_event_type: MouseEventTypeEnum::Move,
-                user_id: username.clone(),
+                user_id: user.clone(),
             });
 
             if let Some(sender) = ws_sender.get() {
@@ -114,55 +181,69 @@ pub fn App() -> impl IntoView {
             style=format!("width: 100vw; height: 100vh; background: {}; overflow: hidden;", bg_color)
             on:mousemove=on_mouse_move
         >
-            <Show
-                when=move || is_connected.get()
-                fallback=move || view! {
-                    // Экран логина
-                    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%;">
-                        <h1 style="color: white">"Enter Name"</h1>
-                        <input
-                            type="text"
-                            on:input=move |ev| set_my_username.set(event_target_value(&ev))
-                            placeholder="Username"
+            {move || match app_state.get() {
+                AppState::Login => view! {
+                    <LoginForm
+                        on_login_success=Callback::new(on_login_success)
+                        on_switch_to_register=Callback::new(on_switch_to_register)
+                        back_url=back_url
+                        api_path=api_path
+                        theme=theme.get_value()
+                    />
+                }.into_any(),
+                AppState::Register => view! {
+                    <RegisterForm
+                        on_registered=Callback::new(on_registered)
+                        on_switch_to_login=Callback::new(on_switch_to_login)
+                        back_url=back_url
+                        api_path=api_path
+                        theme=theme.get_value()
+                    />
+                }.into_any(),
+                AppState::RoomSelection => view! {
+                    <RoomSelector
+                        on_room_selected=Callback::new(on_room_selected)
+                        theme=theme.get_value()
+                    />
+                }.into_any(),
+                AppState::Connected => view! {
+                    <div style="width: 100%; height: 100%; position: relative;">
+                        // Информация о пользователе и комнате
+                        <h3 style="color: #aaa; position: absolute; top: 10px; right: 10px; z-index: 100;">
+                            "Connected as: " {move || username.get()} " | Room: " {move || room_id.get()}
+                        </h3>
+
+                        // Боковое меню
+                        <SideMenu
+                            is_open=is_menu_open
+                            on_chat_open=Callback::new(move |_| is_chat_open.set(true))
                         />
-                        <button on:click=move |_| on_connect()>"Join"</button>
+
+                        // Окно чата
+                        <ChatWindow
+                            is_open=is_chat_open
+                            messages=messages
+                            ws_sender=ws_sender
+                            username=username
+                        />
+
+                        // Рендерим все курсоры из мапы
+                        <For
+                            each=move || {
+                                cursors.get().into_iter().collect::<Vec<_>>()
+                            }
+                            key=|(name, _)| name.clone()
+                            children=move |(name, (sig_x, sig_y))| {
+                                let is_me = name == username.get();
+                                let theme_copy = theme.get_value();
+                                view! {
+                                    <Cursor username=name.clone() x=sig_x y=sig_y is_me=is_me theme=theme_copy />
+                                }
+                            }
+                        />
                     </div>
-                }
-            >
-                // Экран игры
-                <h3 style="color: #aaa; position: absolute; top: 10px; right: 10px;">
-                    "Connected as: " {move || my_username.get()}
-                </h3>
-
-                // Боковое меню
-                <SideMenu
-                    is_open=is_menu_open
-                    on_chat_open=Callback::new(move |_| is_chat_open.set(true))
-                />
-
-                // Окно чата
-                <ChatWindow
-                    is_open=is_chat_open
-                    messages=messages
-                    ws_sender=ws_sender
-                    username=my_username
-                />
-
-                // Рендерим все курсоры из мапы
-                <For
-                    each=move || {
-                        cursors.get().into_iter().collect::<Vec<_>>()
-                    }
-                    key=|(name, _)| name.clone()
-                    children=move |(name, (sig_x, sig_y))| {
-                        let is_me = name == my_username.get();
-                        let theme_copy = theme.get_value();
-                        view! {
-                            <Cursor username=name.clone() x=sig_x y=sig_y is_me=is_me theme=theme_copy />
-                        }
-                    }
-                />
-            </Show>
+                }.into_any(),
+            }}
         </div>
     }
 }
