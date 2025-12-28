@@ -27,7 +27,9 @@ pub fn connect_websocket(
         };
 
         // Убираем http:// или https:// из back_url
-        let host = config.api.back_url
+        let host = config
+            .api
+            .back_url
             .trim_start_matches("http://")
             .trim_start_matches("https://");
 

@@ -41,7 +41,7 @@ pub fn ChatWindow(
 
         let msg = ChatMessagePayload {
             payload: text.clone(),
-            user_id: username.get(),
+            username: username.get(),
         };
 
         // Отправляем сообщение через WebSocket
@@ -120,7 +120,7 @@ pub fn ChatWindow(
                 <div style="flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px;">
                     {move || {
                         messages.get().into_iter().enumerate().map(|(_, msg)| {
-                            let is_mine = msg.user_id == username.get();
+                            let is_mine = msg.username == username.get();
                             let bg_color = if is_mine { "#2563eb" } else { "#374151" };
                             let align = if is_mine { "flex-end" } else { "flex-start" };
                             view! {
@@ -129,7 +129,7 @@ pub fn ChatWindow(
                                     bg_color, align
                                 )>
                                     <div style="font-size: 11px; color: #9ca3af; margin-bottom: 2px;">
-                                        {msg.user_id.clone()}
+                                        {msg.username.clone()}
                                     </div>
                                     <div style="color: white;">
                                         {msg.payload.clone()}

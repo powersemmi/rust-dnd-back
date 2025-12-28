@@ -1,16 +1,16 @@
 use crate::config::get_jwt_secret;
 use axum::{
-    Json, RequestPartsExt,
-    extract::FromRequestParts,
-    http::{StatusCode, request::Parts},
+    extract::FromRequestParts, http::{request::Parts, StatusCode},
     response::{IntoResponse, Response},
+    Json,
+    RequestPartsExt,
 };
 use axum_extra::{
+    headers::{authorization::Bearer, Authorization},
     TypedHeader,
-    headers::{Authorization, authorization::Bearer},
 };
 use chrono::{Duration, Utc};
-use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;

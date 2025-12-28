@@ -11,4 +11,5 @@
 # Editor-based HTTP Client requests
 /httpRequests/
 .env
+.env.docker
 .sqlx/

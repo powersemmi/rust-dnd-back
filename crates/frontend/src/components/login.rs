@@ -1,8 +1,8 @@
 use crate::config::Theme;
-use leptos::prelude::*;
-use leptos::ev::SubmitEvent;
-use shared::auth::{LoginRequest, LoginResponse};
 use gloo_net::http::Request;
+use leptos::ev::SubmitEvent;
+use leptos::prelude::*;
+use shared::auth::{LoginRequest, LoginResponse};
 
 #[component]
 pub fn LoginForm(
@@ -48,11 +48,7 @@ pub fn LoginForm(
                 code: code_val,
             };
 
-            let result = Request::post(&url)
-                .json(&payload)
-                .unwrap()
-                .send()
-                .await;
+            let result = Request::post(&url).json(&payload).unwrap().send().await;
 
             match result {
                 Ok(response) => {
@@ -69,12 +65,16 @@ pub fn LoginForm(
                                 on_login_success.run(data.token);
                             }
                             Err(e) => {
-                                set_error_message.set(Some(format!("Failed to parse response: {}", e)));
+                                set_error_message
+                                    .set(Some(format!("Failed to parse response: {}", e)));
                             }
                         }
                     } else {
                         let status = response.status();
-                        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                        let error_text = response
+                            .text()
+                            .await
+                            .unwrap_or_else(|_| "Unknown error".to_string());
                         set_error_message.set(Some(format!("Error {}: {}", status, error_text)));
                     }
                 }

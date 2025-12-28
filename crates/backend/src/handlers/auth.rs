@@ -105,10 +105,17 @@ pub async fn login(
         None => return Err((StatusCode::UNAUTHORIZED, "User not found".to_string())),
     };
 
-    let decrypted_secret = decrypt(&user.totp_secret, get_auth_secret()).map_err(|e| {
+    let secret = decrypt(&user.totp_secret, get_auth_secret()).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Crypto error: {}", e),
+        )
+    })?;
+
+    let secret = Secret::Encoded(secret).to_bytes().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Secret decode error: {}", e),
         )
     })?;
 
@@ -117,7 +124,7 @@ pub async fn login(
         6,
         1,
         30,
-        Vec::from(decrypted_secret),
+        secret,
         Some("DnD-App".to_string()),
         payload.username.clone(),
     )
@@ -156,9 +163,7 @@ pub async fn login(
         (status = 200, description = "Информация о текущем пользователе")
     )
 )]
-pub async fn get_me(
-    auth_user: AuthUser,
-) -> impl IntoResponse {
+pub async fn get_me(auth_user: AuthUser) -> impl IntoResponse {
     Json(json!({
         "id": auth_user.user_id,
         "username": auth_user.username,

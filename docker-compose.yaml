@@ -26,6 +26,8 @@ services:
       context: .
       dockerfile: Dockerfile
       target: backend
+    env_file:
+      - .env
     environment:
       - RUST_BACKTRACE=1
       - SERVER_HOST=0.0.0.0
@@ -46,17 +48,8 @@ services:
       context: .
       dockerfile: Dockerfile
       target: frontend
-      args:
-        - BACK_HOST=${BACK_HOST}
-        - ROOM_PATH=${ROOM_PATH}
-        - API_PATH=${API_PATH}
-        ## theme
-        - MY_CURSOR_COLOR=${MY_CURSOR_COLOR}
-        - OTHER_CURSOR_COLOR=${OTHER_CURSOR_COLOR}
-        - CURSOR_SIZE=${CURSOR_SIZE}
-        - MOUSE_THROTTLE_MS=${MOUSE_THROTTLE_MS}
-        - BACKGROUND_COLOR=${BACKGROUND_COLOR}
-        - CURSOR_TRANSITION=${CURSOR_TRANSITION}
+      # Все переменные загружаются из .env.docker внутри Dockerfile
+      # Больше не нужно передавать build args для каждой новой переменной темы
     ports:
       - "8080:80"
     networks:

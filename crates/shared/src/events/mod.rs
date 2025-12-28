@@ -1,6 +1,7 @@
 pub mod chat;
 pub mod mouse;
 pub mod params;
+pub mod sync;
 
 pub use crate::events::chat::ChatMessagePayload;
 pub use crate::events::mouse::MouseClickPayload;
@@ -10,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 #[cfg(feature = "validation")]
 use validator::Validate;
+use crate::events::sync::{SyncSnapshotPayload, SyncSnapshotRequestPayload, SyncVersionPayload};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "schemas", derive(ToSchema))]
@@ -23,6 +25,16 @@ pub enum ClientEvent {
 
     #[serde(rename = "PING")]
     Ping,
+
+    /// Sync events
+    #[serde(rename = "SYNC_REQUEST")]
+    SyncRequest,
+    #[serde(rename = "SYNC_VERSION_ANNOUNCE")]
+    SyncVersionAnnounce(SyncVersionPayload),
+    #[serde(rename = "SYNC_SNAPSHOT_REQUEST")]
+    SyncSnapshotRequest(SyncSnapshotRequestPayload),
+    #[serde(rename = "SYNC_SNAPSHOT")]
+    SyncSnapshot(SyncSnapshotPayload),
 }
 
 #[cfg(feature = "validation")]
@@ -31,6 +43,10 @@ impl ClientEvent {
         match self {
             ClientEvent::MouseClickPayload(p) => p.validate(),
             ClientEvent::ChatMessage(p) => p.validate(),
+            ClientEvent::SyncVersionAnnounce(p) => p.validate(),
+            ClientEvent::SyncSnapshotRequest(p) => p.validate(),
+            ClientEvent::SyncSnapshot(p) => p.validate(),
+            ClientEvent::SyncRequest => Ok(()),
             ClientEvent::Ping => Ok(()),
         }
     }

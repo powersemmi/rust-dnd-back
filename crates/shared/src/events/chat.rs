@@ -22,5 +22,5 @@ pub struct ChatMessagePayload {
     pub payload: String,
 
     #[cfg_attr(feature = "validation", validate(length(min = 1, max = 255)))]
-    pub user_id: String,
+    pub username: String,
 }
