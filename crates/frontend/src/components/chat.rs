@@ -13,20 +13,15 @@ pub fn ChatWindow(
 ) -> impl IntoView {
     let (input_text, set_input_text) = signal(String::new());
 
-    // Позиция и размер окна
     let (pos_x, set_pos_x) = signal(100);
     let (pos_y, set_pos_y) = signal(100);
     let (width, set_width) = signal(400);
     let (height, set_height) = signal(500);
-
-    // Состояние перетаскивания
     let (is_dragging, set_is_dragging) = signal(false);
     let (drag_start_x, set_drag_start_x) = signal(0);
     let (drag_start_y, set_drag_start_y) = signal(0);
     let (window_start_x, set_window_start_x) = signal(0);
     let (window_start_y, set_window_start_y) = signal(0);
-
-    // Состояние изменения размера
     let (is_resizing, set_is_resizing) = signal(false);
     let (resize_start_x, set_resize_start_x) = signal(0);
     let (resize_start_y, set_resize_start_y) = signal(0);
@@ -35,23 +30,23 @@ pub fn ChatWindow(
 
     let send_message = move || {
         let text = input_text.get();
-        if text.is_empty() {
-            return;
-        }
+        if text.is_empty() { return; }
 
         let msg = ChatMessagePayload {
             payload: text.clone(),
-            username: username.get(),
+            username: username.get_untracked(), // Используем untracked для безопасности
         };
 
-        // Отправляем сообщение через WebSocket
-        if let Some(sender) = ws_sender.get() {
-            let _ = sender.unbounded_send(ClientEvent::ChatMessage(msg));
+        if let Some(mut sender) = ws_sender.get_untracked() { // Тоже untracked
+            let event = ClientEvent::ChatMessage(msg);
+            if let Ok(json) = serde_json::to_string(&event) {
+                let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
+            }
         }
-
         set_input_text.set(String::new());
     };
 
+    // ... (handlers - без изменений) ...
     let on_header_mouse_down = move |ev: MouseEvent| {
         ev.prevent_default();
         set_is_dragging.set(true);
@@ -71,7 +66,6 @@ pub fn ChatWindow(
         set_size_start_h.set(height.get());
     };
 
-    // Глобальные обработчики для перетаскивания и изменения размера
     let on_global_mouse_move = move |ev: MouseEvent| {
         if is_dragging.get() {
             let dx = ev.client_x() - drag_start_x.get();
@@ -118,9 +112,13 @@ pub fn ChatWindow(
                 </div>
 
                 <div style="flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px;">
-                    {move || {
-                        messages.get().into_iter().enumerate().map(|(_, msg)| {
-                            let is_mine = msg.username == username.get();
+                    <For
+                        each=move || messages.get()
+                        key=|msg| (msg.username.clone(), msg.payload.clone())
+                        children=move |msg| {
+                            // Сохраняем username в локальную переменную, чтобы не дергать сигнал внутри view!
+                            let my_name = username.get_untracked();
+                            let is_mine = msg.username == my_name;
                             let bg_color = if is_mine { "#2563eb" } else { "#374151" };
                             let align = if is_mine { "flex-end" } else { "flex-start" };
                             view! {
@@ -129,15 +127,15 @@ pub fn ChatWindow(
                                     bg_color, align
                                 )>
                                     <div style="font-size: 11px; color: #9ca3af; margin-bottom: 2px;">
-                                        {msg.username.clone()}
+                                        {msg.username}
                                     </div>
                                     <div style="color: white;">
-                                        {msg.payload.clone()}
+                                        {msg.payload}
                                     </div>
                                 </div>
                             }
-                        }).collect_view()
-                    }}
+                        }
+                    />
                 </div>
 
                 <div style="padding: 15px; border-top: 1px solid #444; display: flex; gap: 10px;">

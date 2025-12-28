@@ -1,6 +1,8 @@
+use crate::events::room::RoomState;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+#[cfg(feature = "schemas")]
 use utoipa::ToSchema;
+#[cfg(feature = "validation")]
 use validator::Validate;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -28,5 +30,5 @@ pub struct SyncSnapshotPayload {
     #[cfg_attr(feature = "validation", validate(range(min = 0)))]
     pub version: u64,
     #[cfg_attr(feature = "schemas", schema(value_type = Object))]
-    pub state: Value,
+    pub state: RoomState,
 }

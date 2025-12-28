@@ -112,6 +112,7 @@ pub fn App() -> impl IntoView {
         connect_websocket(
             selected_room_id,
             jwt_token.get(),
+            username.get_untracked(), // <-- Передаем username
             set_ws_sender,
             set_cursors,
             messages,
@@ -129,14 +130,27 @@ pub fn App() -> impl IntoView {
         let y = ev.client_y();
         let user = username.get();
 
-        // Сразу обновляем СВОЙ курсор локально (чтобы не ждать пинга от сервера)
         set_cursors.update(|map| {
-            if let Some((sig_x, sig_y)) = map.get(&user) {
-                sig_x.set(x);
-                sig_y.set(y);
+            if let Some(cursor_signals) = map.get(&user) {
+                cursor_signals.set_x.set(x);
+                cursor_signals.set_y.set(y);
             } else {
-                map.insert(user.clone(), (RwSignal::new(x), RwSignal::new(y)));
+                let (rx_x, tx_x) = signal(x);
+                let (rx_y, tx_y) = signal(y);
+                map.insert(user.clone(), CursorSignals {
+                    x: rx_x,
+                    set_x: tx_x,
+                    y: rx_y,
+                    set_y: tx_y,
+                });
             }
+        });
+
+        let event = ClientEvent::MouseClickPayload(MouseClickPayload {
+            x,
+            y,
+            mouse_event_type: MouseEventTypeEnum::Move,
+            user_id: user.clone(),
         });
 
         // Отправляем в канал (а оттуда оно уйдет в сокет)
@@ -144,7 +158,7 @@ pub fn App() -> impl IntoView {
             static IS_THROTTLED: AtomicBool = AtomicBool::new(false);
         }
 
-        let can_send = IS_THROTTLED.with(|throttled| {
+        let should_send = IS_THROTTLED.with(|throttled| {
             if !throttled.load(Ordering::Relaxed) {
                 throttled.store(true, Ordering::Relaxed);
                 true
@@ -153,16 +167,12 @@ pub fn App() -> impl IntoView {
             }
         });
 
-        if can_send {
-            let event = ClientEvent::MouseClickPayload(MouseClickPayload {
-                x,
-                y,
-                mouse_event_type: MouseEventTypeEnum::Move,
-                user_id: user.clone(),
-            });
-
-            if let Some(sender) = ws_sender.get() {
-                let _ = sender.unbounded_send(event);
+        if should_send {
+            // ИСПРАВЛЕНИЕ: Используем try_send
+            if let Some(mut sender) = ws_sender.get() {
+                if let Ok(json) = serde_json::to_string(&event) {
+                    let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
+                }
             }
 
             let throttle_ms = cfg.get_value().theme.mouse_throttle_ms;
@@ -233,11 +243,18 @@ pub fn App() -> impl IntoView {
                                 cursors.get().into_iter().collect::<Vec<_>>()
                             }
                             key=|(name, _)| name.clone()
-                            children=move |(name, (sig_x, sig_y))| {
+                            children=move |(name, cursor_sig)| { // <-- cursor_sig это CursorSignals
                                 let is_me = name == username.get();
                                 let theme_copy = theme.get_value();
                                 view! {
-                                    <Cursor username=name.clone() x=sig_x y=sig_y is_me=is_me theme=theme_copy />
+                                    // Передаем сигналы из структуры
+                                    <Cursor
+                                        username=name.clone()
+                                        x=cursor_sig.x // ReadSignal реализует Into<Signal>
+                                        y=cursor_sig.y
+                                        is_me=is_me
+                                        theme=theme_copy
+                                    />
                                 }
                             }
                         />
