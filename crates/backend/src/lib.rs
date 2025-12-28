@@ -1,11 +1,11 @@
 pub mod config;
 pub mod docs;
+pub mod handlers;
 pub mod state;
-
-pub mod handler;
+pub mod utils;
 
 pub use config::Config;
-use shared::events::{ChatMessagePayload, ClientEvent, MouseMovePayload};
+use shared::events::{ChatMessagePayload, ClientEvent, MouseClickPayload};
 pub use state::AppState;
 use utoipa::OpenApi;
 
@@ -20,7 +20,7 @@ use utoipa::OpenApi;
         schemas(
             ClientEvent,
             ChatMessagePayload,
-            MouseMovePayload
+            MouseClickPayload
         )
     ),
     tags(

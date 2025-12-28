@@ -1,21 +1,20 @@
-use crate::state::AppState;
+use crate::AppState;
+use crate::utils::jwt::verify_jwt;
 use axum::extract::ws::{Message, Utf8Bytes, WebSocket};
 use axum::extract::{Query, State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
 use shared::events::{ClientEvent, Params};
-use std::string::String;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
+use uuid::Uuid;
 
-pub async fn ws_handler(
-    ws: WebSocketUpgrade,
-    Query(params): Query<Params>,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    info!("Handling WebSocket connection for room: {}", params.room_id);
-    ws.on_upgrade(move |socket| handle_socket(socket, params.room_id, state))
+#[repr(u8)]
+enum EventType {
+    Text = 0,
+    Redis = 1,
+    Error = 2,
 }
 
 fn try_parse_event(text: &str) -> Result<ClientEvent, Utf8Bytes> {
@@ -30,13 +29,6 @@ fn try_parse_event(text: &str) -> Result<ClientEvent, Utf8Bytes> {
         return Err(format!("{{\"error\": \"Validation failed: {}\"}}", err).into());
     }
     Ok(event)
-}
-
-#[repr(u8)]
-enum EventType {
-    Text = 0,
-    Redis = 1,
-    Error = 2,
 }
 
 async fn handle_events(
@@ -71,7 +63,7 @@ async fn handle_events(
     }
 }
 
-async fn handle_socket(socket: WebSocket, room_id: String, state: Arc<AppState>) {
+async fn handle_socket(socket: WebSocket, room_id: String, user_id: Uuid, state: Arc<AppState>) {
     let channel_name = format!("room:{}", room_id);
     let (mut sender, mut receiver) = socket.split();
     let (tx, mut rx) = mpsc::channel::<Message>(100);
@@ -81,7 +73,7 @@ async fn handle_socket(socket: WebSocket, room_id: String, state: Arc<AppState>)
         .await
         .expect("Failed to get pubsub connection");
 
-    info!("User connected to channel with name {channel_name}");
+    info!("User={user_id} connected to channel with channel_name={channel_name}");
 
     pubsub
         .subscribe(&channel_name)
@@ -152,4 +144,23 @@ async fn handle_socket(socket: WebSocket, room_id: String, state: Arc<AppState>)
     }
 
     info!("User disconnected from room {}", room_id);
+}
+
+pub async fn ws_room_handler(
+    ws: WebSocketUpgrade,
+    Query(params): Query<Params>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let claims = match verify_jwt(&params.token) {
+        Ok(claims) => claims,
+        Err(e) => {
+            error!("WebSocket auth failed: {}", e);
+            // Если токен невалиден, возвращаем 401 Unauthorized
+            // WebSocket соединение даже не начнется
+            return (axum::http::StatusCode::UNAUTHORIZED, "Invalid token").into_response();
+        }
+    };
+
+    info!("Handling WebSocket connection for room: {}", params.room_id);
+    ws.on_upgrade(move |socket| handle_socket(socket, params.room_id, claims.sub, state))
 }

@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# Локальная зависимость (без валидации для WASM)
 shared = { path = "../shared", default-features = false }
 
 leptos = { version = "0.8.15", features = ["csr"] }
@@ -13,6 +12,6 @@ serde_json = "1.0"
 
 gloo-net = "0.6.0"
 gloo-timers = { version = "0.3.0", features = ["futures"] }
-console_error_panic_hook = "0.1.7" # Красивые паники в консоли браузера
+console_error_panic_hook = "0.1.7"
 futures = "0.3.31"
 wasm-bindgen-futures = "0.4.56"

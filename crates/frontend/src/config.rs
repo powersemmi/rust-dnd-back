@@ -1,32 +1,83 @@
-/// Конфигурация фронтенда
-
-/// URL WebSocket сервера (можно переопределить через переменную окружения)
-pub fn ws_url() -> String {
-    option_env!("WS_URL")
-        .unwrap_or("ws://localhost:3000")
-        .to_string()
+#[derive(Clone)]
+pub struct Config {
+    pub theme: Theme,
+    pub api: Api,
 }
 
-/// Путь к WebSocket endpoint для комнаты
-pub const WS_ROOM_PATH: &str = "/ws/room";
+#[derive(Clone)]
+pub struct Theme {
+    pub my_cursor_color: &'static str,
+    pub other_cursor_color: &'static str,
+    pub cursor_size: u32,
+    pub mouse_throttle_ms: u64,
+    pub background_color: &'static str,
+    pub cursor_transition: &'static str,
+}
 
-/// Цвет курсора текущего пользователя
-pub const MY_CURSOR_COLOR: &str = "#4CAF50"; // Зеленый
+#[derive(Clone)]
+pub struct Api {
+    pub back_url: &'static str,
+    pub ws_path: &'static str,
+    pub api_path: &'static str,
+}
 
-/// Цвет курсора других пользователей
-pub const OTHER_CURSOR_COLOR: &str = "#FF5722"; // Красный
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            theme: Theme::default(),
+            api: Api::default(),
+        }
+    }
+}
 
-/// Размер курсора (ширина и высота в пикселях)
-pub const CURSOR_SIZE: u32 = 24;
+const CURSOR_SIZE_STR: &str = env!("CURSOR_SIZE");
+const MOUSE_THROTTLE_MS_STR: &str = env!("MOUSE_THROTTLE_MS");
 
-/// Время троттлинга отправки событий движения мыши (в миллисекундах)
-pub const MOUSE_THROTTLE_MS: u64 = 10;
+const fn parse_u32(s: &str) -> u32 {
+    let bytes = s.as_bytes();
+    let mut result = 0u32;
+    let mut i = 0;
+    while i < bytes.len() {
+        let digit = bytes[i].wrapping_sub(b'0');
+        assert!(digit < 10, "Invalid digit in numeric string");
+        result = result * 10 + digit as u32;
+        i += 1;
+    }
+    result
+}
 
-/// ID комнаты по умолчанию
-pub const DEFAULT_ROOM_ID: &str = "lobby";
+const fn parse_u64(s: &str) -> u64 {
+    let bytes = s.as_bytes();
+    let mut result = 0u64;
+    let mut i = 0;
+    while i < bytes.len() {
+        let digit = bytes[i].wrapping_sub(b'0');
+        assert!(digit < 10, "Invalid digit in numeric string");
+        result = result * 10 + digit as u64;
+        i += 1;
+    }
+    result
+}
 
-/// Цвет фона приложения
-pub const BACKGROUND_COLOR: &str = "#333";
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            my_cursor_color: env!("MY_CURSOR_COLOR"),
+            other_cursor_color: env!("OTHER_CURSOR_COLOR"),
+            cursor_size: parse_u32(CURSOR_SIZE_STR),
+            mouse_throttle_ms: parse_u64(MOUSE_THROTTLE_MS_STR),
+            background_color: env!("BACKGROUND_COLOR"),
+            cursor_transition: env!("CURSOR_TRANSITION"),
+        }
+    }
+}
 
-/// Время перехода курсора (CSS transition)
-pub const CURSOR_TRANSITION: &str = "transform 0.1s linear";
+impl Default for Api {
+    fn default() -> Self {
+        Self {
+            back_url: env!("BACK_URL"),
+            ws_path: env!("WS_PATH"),
+            api_path: env!("API_PATH"),
+        }
+    }
+}

@@ -4,19 +4,25 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# Локальная зависимость
 shared = { path = "../shared", features = ["schemas"] }
 
 tokio = { version = "1.48.0", features = ["full"] }
 axum = { version = "0.8.8", features = ["ws"] }
-serde_json = "1.0"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-#sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid"] }
+axum-extra = { version = "0.12.5", features = ["typed-header"] }
+serde_json = "1.0.148"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }
 redis = { version = "1.0.2", features = ["tokio-comp"] }
-#uuid = { version = "1.0", features = ["v4", "serde"] }
-futures = "0.3" # Полезно для работы со стримами веб-сокетов
-dotenvy = "0.15"
+uuid = { version = "1.19.0", features = ["v4", "serde"] }
+futures = "0.3.31" # Полезно для работы со стримами веб-сокетов
+dotenvy = "0.15.7"
 utoipa = { version = "5.4.0", features = ["axum_extras", "uuid"] }
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
-
+totp-rs = { version = "5.7.0", features = ["qr", "gen_secret"] }
+serde = { version = "1.0.228", features = ["derive"] }
+jsonwebtoken = { version = "10.2.0", features = ["rust_crypto"] }
+chrono = { version = "0.4.42", features = ["serde"] }
+aes-gcm = "0.10.3"
+sha2 = "0.10.9"
+base64 = "0.22.1"

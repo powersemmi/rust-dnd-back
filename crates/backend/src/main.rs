@@ -1,6 +1,8 @@
 use axum::Router;
-use axum::routing::get;
-use backend::{ApiDoc, Config, handler, state};
+use axum::routing::{get, post};
+use backend::handlers::{auth, room};
+use backend::{ApiDoc, Config, state};
+use sqlx::postgres::PgPoolOptions;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -22,11 +24,25 @@ async fn main() {
     init_tracing();
     let config = Config::init();
     let redis = redis::Client::open(config.redis_url).unwrap();
-    let state = state::AppState::new(redis);
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&config.database_url)
+        .await
+        .expect("Failed to create pool");
+
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("Failed to run migrations");
+
+    let state = state::AppState::new(redis, pool);
 
     let router = Router::new()
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
-        .route("/ws/room", get(handler::ws_handler))
+        .route("/ws/room", get(room::ws_room_handler))
+        .route("/api/auth/register", post(auth::register))
+        .route("/api/auth/login", post(auth::login))
+        .route("/api/auth/me", get(auth::get_me))
         .with_state(Arc::from(state));
 
     let addr: SocketAddr = SocketAddr::from((config.server_addr.ip(), config.server_addr.port()));

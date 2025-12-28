@@ -1,4 +1,3 @@
-use crate::config;
 use leptos::prelude::*;
 
 /// Компонент одного курсора
@@ -8,11 +7,12 @@ pub fn Cursor(
     #[prop(into)] x: Signal<i32>,
     #[prop(into)] y: Signal<i32>,
     is_me: bool,
+    theme: crate::config::Theme,
 ) -> impl IntoView {
     let color = if is_me {
-        config::MY_CURSOR_COLOR
+        theme.my_cursor_color
     } else {
-        config::OTHER_CURSOR_COLOR
+        theme.other_cursor_color
     };
 
     let style = move || {
@@ -20,14 +20,14 @@ pub fn Cursor(
             "position: absolute; left: {}px; top: {}px; pointer-events: none; transition: {}; z-index: 100;",
             x.get(),
             y.get(),
-            config::CURSOR_TRANSITION
+            &theme.cursor_transition
         )
     };
 
     view! {
         <div style=style>
             // Стрелочка курсора
-            <svg width={config::CURSOR_SIZE.to_string()} height={config::CURSOR_SIZE.to_string()} viewBox="0 0 24 24" fill={color}>
+            <svg width={theme.cursor_size.to_string()} height={theme.cursor_size.to_string()} viewBox="0 0 24 24" fill={color}>
                 <path d="M7 2l12 11.2-5.8.5 3.3 7.3-2.2.9-3.2-7.4-4.4 4z"/>
             </svg>
             // Никнейм

@@ -2,9 +2,22 @@ services:
   redis:
     image: redis:alpine
     ports:
-      - 6379:6379
+      - "6379:6379"
     security_opt:
       - no-new-privileges:true
+    networks:
+      - dev-network
+
+  postgres:
+    image: postgres:alpine
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=dnd_db
     networks:
       - dev-network
 
@@ -18,6 +31,7 @@ services:
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=3000
       - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgres://user:password@postgres:5432/dnd_db
       - RUST_LOG=debug
     ports:
       - "3000:3000"
@@ -25,20 +39,26 @@ services:
       - dev-network
     depends_on:
       - redis
+      - postgres
 
   frontend:
     build:
       context: .
       dockerfile: Dockerfile
       target: frontend
+      args:
+        - BACK_HOST=${BACK_HOST}
+        - ROOM_PATH=${ROOM_PATH}
+        - API_PATH=${API_PATH}
+        ## theme
+        - MY_CURSOR_COLOR=${MY_CURSOR_COLOR}
+        - OTHER_CURSOR_COLOR=${OTHER_CURSOR_COLOR}
+        - CURSOR_SIZE=${CURSOR_SIZE}
+        - MOUSE_THROTTLE_MS=${MOUSE_THROTTLE_MS}
+        - BACKGROUND_COLOR=${BACKGROUND_COLOR}
+        - CURSOR_TRANSITION=${CURSOR_TRANSITION}
     ports:
       - "8080:80"
-    environment:
-      - RUST_BACKTRACE=1
-      - SERVER_HOST=localhost
-      - SERVER_PORT=3000
-      - BACKEND_URL=http://backend:3000
-      - RUST_LOG=debug
     networks:
       - dev-network
     depends_on:
@@ -47,3 +67,6 @@ services:
 
 networks:
   dev-network:
+
+volumes:
+  postgres-data:

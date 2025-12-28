@@ -8,6 +8,12 @@ utoipa = { version = "5.4.0", features = ["uuid"], optional = true }
 validator = { version = "0.20.0", features = ["derive"], default-features = false, optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { version = "1.19.0", features = ["v4", "js"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+uuid = { version = "1.19.0", features = ["v4"] }
+
 [features]
 # Фича "schemas" включает зависимость utoipa
 schemas = ["dep:utoipa"]

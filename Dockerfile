@@ -18,6 +18,10 @@ RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path r
 COPY crates crates
 COPY Cargo.lock Cargo.toml ./
 
+# Copy sqlx cashe
+ENV SQLX_OFFLINE=true
+COPY .sqlx .sqlx
+
 RUN cargo build --release --target x86_64-unknown-linux-musl --bin backend
 
 FROM chef AS builder-frontend
@@ -29,6 +33,32 @@ COPY crates crates
 COPY Cargo.lock Cargo.toml ./
 
 WORKDIR /app/crates/frontend
+
+# Объявляем build-time переменные для frontend
+## api
+ARG BACK_URL
+ARG WS_PATH
+ARG API_PATH
+
+ENV BACK_URL=${BACK_URL}
+ENV WS_PATH=${WS_PATH}
+ENV API_PATH=${API_PATH}
+
+## themes
+ARG MY_CURSOR_COLOR
+ARG OTHER_CURSOR_COLOR
+ARG CURSOR_SIZE
+ARG MOUSE_THROTTLE_MS
+ARG BACKGROUND_COLOR
+ARG CURSOR_TRANSITION
+
+ENV MY_CURSOR_COLOR=${MY_CURSOR_COLOR}
+ENV OTHER_CURSOR_COLOR=${OTHER_CURSOR_COLOR}
+ENV CURSOR_SIZE=${CURSOR_SIZE}
+ENV MOUSE_THROTTLE_MS=${MOUSE_THROTTLE_MS}
+ENV BACKGROUND_COLOR=${BACKGROUND_COLOR}
+ENV CURSOR_TRANSITION=${CURSOR_TRANSITION}
+
 RUN trunk build --release
 
 FROM scratch AS backend
