@@ -1,6 +1,7 @@
 pub mod app;
 pub mod chat;
 pub mod cursor;
+pub mod draggable_window;
 pub mod language_selector;
 pub mod login;
 pub mod register;

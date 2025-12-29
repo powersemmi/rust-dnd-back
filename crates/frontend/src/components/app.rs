@@ -137,6 +137,7 @@ pub fn App() -> impl IntoView {
             set_ws_sender,
             set_cursors,
             messages,
+            state_events,
             cfg.get_value(),
         );
     };
@@ -267,6 +268,7 @@ pub fn App() -> impl IntoView {
                             messages=messages
                             ws_sender=ws_sender
                             username=username
+                            theme=theme.get_value()
                         />
 
                         // Окно настроек

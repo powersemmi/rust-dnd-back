@@ -1,6 +1,8 @@
+use crate::components::statistics::StateEvent;
 use crate::config;
 use futures::{SinkExt, StreamExt};
 use gloo_timers::future::TimeoutFuture;
+use js_sys;
 use leptos::prelude::*;
 use log::{debug, error};
 use rand::seq::IndexedRandom;
@@ -73,6 +75,7 @@ pub fn connect_websocket(
     set_ws_sender: WriteSignal<Option<WsSender>>,
     set_cursors: WriteSignal<HashMap<String, CursorSignals>>,
     messages_signal: RwSignal<Vec<ChatMessagePayload>>,
+    state_events: RwSignal<Vec<StateEvent>>,
     config: config::Config,
 ) {
     // 1. Инициализация состояния (ИСПОЛЬЗУЕМ Rc<RefCell> ВМЕСТО СИГНАЛОВ)
@@ -194,7 +197,18 @@ pub fn connect_websocket(
                                             &room_state.borrow()
                                         );
 
-                                        // 4. Обновляем UI (messages_signal живет в App, он безопасен)
+                                        // 4. Логируем событие
+                                        let timestamp = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
+                                        state_events.update(|events| {
+                                            events.push(StateEvent {
+                                                version: current_ver,
+                                                event_type: "CHAT_MESSAGE".to_string(),
+                                                description: format!("{}: {}", msg.username, msg.payload),
+                                                timestamp,
+                                            });
+                                        });
+
+                                        // 5. Обновляем UI (messages_signal живет в App, он безопасен)
                                         messages_signal.update(|msgs| msgs.push(msg));
                                     }
 
@@ -228,7 +242,17 @@ pub fn connect_websocket(
                                     }
 
                                     ClientEvent::SyncVersionAnnounce(payload) => {
-                                        sync_candidates.borrow_mut().push((payload.username, payload.version));
+                                        sync_candidates.borrow_mut().push((payload.username.clone(), payload.version));
+
+                                        let timestamp = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
+                                        state_events.update(|events| {
+                                            events.push(StateEvent {
+                                                version: *local_version.borrow(),
+                                                event_type: "SYNC_VERSION_ANNOUNCE".to_string(),
+                                                description: format!("{} announced version {}", payload.username, payload.version),
+                                                timestamp,
+                                            });
+                                        });
                                     }
 
                                     ClientEvent::SyncSnapshotRequest(payload) => {
@@ -241,6 +265,16 @@ pub fn connect_websocket(
                                             if let Ok(json) = serde_json::to_string(&snapshot) {
                                                 let _ = tx.clone().try_send(Message::Text(json));
                                             }
+
+                                            let timestamp = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
+                                            state_events.update(|events| {
+                                                events.push(StateEvent {
+                                                    version: *local_version.borrow(),
+                                                    event_type: "SYNC_SNAPSHOT_SENT".to_string(),
+                                                    description: format!("Sent snapshot v{} to requester", *local_version.borrow()),
+                                                    timestamp,
+                                                });
+                                            });
                                         }
                                     }
 
@@ -256,6 +290,18 @@ pub fn connect_websocket(
                                             messages_signal.set(payload.state.chat_history.clone());
 
                                             save_state(&room_name_clone, payload.version, &payload.state);
+
+                                            let timestamp = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
+                                            let current_ver = *ver;
+                                            drop(ver);
+                                            state_events.update(|events| {
+                                                events.push(StateEvent {
+                                                    version: current_ver,
+                                                    event_type: "SYNC_SNAPSHOT_RECEIVED".to_string(),
+                                                    description: format!("Applied snapshot v{} ({} messages)", current_ver, payload.state.chat_history.len()),
+                                                    timestamp,
+                                                });
+                                            });
                                         }
                                     }
 

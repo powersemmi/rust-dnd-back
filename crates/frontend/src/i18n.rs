@@ -46,6 +46,11 @@ leptos_i18n::declare_locales! {
             no_events: "No events yet",
             close: "Close",
         },
+        chat: {
+            title: "Chat",
+            placeholder: "Enter message...",
+            send: "Send",
+        },
     },
 
     ru: {
@@ -91,6 +96,11 @@ leptos_i18n::declare_locales! {
             event_log: "Журнал событий",
             no_events: "Событий пока нет",
             close: "Закрыть",
+        },
+        chat: {
+            title: "Чат",
+            placeholder: "Введите сообщение...",
+            send: "Отправить",
         },
     },
 }
