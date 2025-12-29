@@ -1,12 +1,15 @@
 use crate::config::Theme;
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
+use crate::i18n::i18n::{t, t_string, use_i18n};
 
 #[component]
 pub fn RoomSelector(
     on_room_selected: Callback<String>, // room_id
     theme: Theme,
 ) -> impl IntoView {
+    let i18n = use_i18n();
+
     // Загружаем последнюю комнату из localStorage
     let last_room = web_sys::window()
         .and_then(|w| w.local_storage().ok().flatten())
@@ -21,7 +24,7 @@ pub fn RoomSelector(
 
         let room_val = room_id.get();
         if room_val.is_empty() {
-            set_error_message.set(Some("Room ID cannot be empty".to_string()));
+            set_error_message.set(Some(t_string!(i18n, auth.room.error_empty).to_string()));
             return;
         }
 
@@ -47,16 +50,16 @@ pub fn RoomSelector(
     view! {
         <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 20px;">
             <div style=format!("background: {}; padding: 40px; border-radius: 10px; max-width: 400px; width: 100%;", form_bg)>
-                <h1 style="color: white; text-align: center; margin-bottom: 30px;">"Select Room"</h1>
+                <h1 style="color: white; text-align: center; margin-bottom: 30px;">{t!(i18n, auth.room.title)}</h1>
 
                 <form on:submit=on_submit style="display: flex; flex-direction: column; gap: 20px;">
                     <div style="display: flex; flex-direction: column; gap: 8px;">
-                        <label style="color: #ccc;">"Room ID"</label>
+                        <label style="color: #ccc;">{t!(i18n, auth.room.room_id)}</label>
                         <input
                             type="text"
                             value=move || room_id.get()
                             on:input=move |ev| set_room_id.set(event_target_value(&ev))
-                            placeholder="Enter room ID (e.g., main-room)"
+                            placeholder=move || t_string!(i18n, auth.room.room_id).to_string()
                             style=format!("padding: 12px; border-radius: 5px; border: 1px solid {}; background: {}; color: {}; font-size: 16px;", input_border, input_bg, input_text)
                         />
                     </div>
@@ -71,7 +74,7 @@ pub fn RoomSelector(
                         type="submit"
                         style=format!("padding: 12px; background: {}; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; font-weight: bold;", button_color)
                     >
-                        "Join Room"
+                        {t!(i18n, auth.room.button)}
                     </button>
                 </form>
             </div>

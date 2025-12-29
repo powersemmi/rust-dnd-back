@@ -1,19 +1,22 @@
 use crate::config;
+use crate::i18n::i18n::{I18nContextProvider, Locale};
 use leptos::prelude::*;
 use shared::events::{
-    ChatMessagePayload, ClientEvent, MouseClickPayload, mouse::MouseEventTypeEnum,
+    mouse::MouseEventTypeEnum, ChatMessagePayload, ClientEvent, MouseClickPayload,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use wasm_bindgen_futures::spawn_local;
-
 use super::chat::ChatWindow;
 use super::cursor::Cursor;
+use super::language_selector::LanguageSelector;
 use super::login::LoginForm;
 use super::register::RegisterForm;
 use super::room_selector::RoomSelector;
+use super::settings::Settings;
 use super::side_menu::SideMenu;
-use super::websocket::{CursorSignals, WsSender, connect_websocket};
+use super::statistics::{StateEvent, StatisticsWindow};
+use super::websocket::{connect_websocket, CursorSignals, WsSender};
 
 #[derive(Clone, Copy, PartialEq)]
 enum AppState {
@@ -25,6 +28,19 @@ enum AppState {
 
 #[component]
 pub fn App() -> impl IntoView {
+    // Загружаем сохранённую локаль из localStorage или используем дефолтную
+    let initial_locale = web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item("locale").ok().flatten())
+        .map(|locale_str| {
+            if locale_str == "ru" {
+                Locale::ru
+            } else {
+                Locale::en
+            }
+        })
+        .unwrap_or(Locale::en);
+
     // Конфигурация
     let cfg = StoredValue::new(config::Config::default());
     let theme = StoredValue::new(cfg.get_value().theme.clone());
@@ -58,12 +74,17 @@ pub fn App() -> impl IntoView {
     // Сообщения чата
     let messages = RwSignal::new(Vec::<ChatMessagePayload>::new());
 
+    // События статистики
+    let state_events = RwSignal::new(Vec::<StateEvent>::new());
+
     // WebSocket sender
     let (ws_sender, set_ws_sender) = signal::<Option<WsSender>>(None);
 
     // UI состояния
     let is_menu_open = RwSignal::new(false);
     let is_chat_open = RwSignal::new(false);
+    let is_settings_open = RwSignal::new(false);
+    let is_statistics_open = RwSignal::new(false);
 
     // Загружаем токен и username из localStorage если есть
     if initial_state == AppState::RoomSelection {
@@ -187,10 +208,18 @@ pub fn App() -> impl IntoView {
 
     let bg_color = theme.get_value().background_color;
     view! {
-        <div
-            style=format!("width: 100vw; height: 100vh; background: {}; overflow: hidden;", bg_color)
-            on:mousemove=on_mouse_move
-        >
+        <I18nContextProvider>
+            <div
+                style=format!("width: 100vw; height: 100vh; background: {}; overflow: hidden;", bg_color)
+                on:mousemove=on_mouse_move
+            >
+                <Show when=move || app_state.get() != AppState::Connected>
+                    <LanguageSelector
+                        initial_locale=initial_locale
+                        theme=theme.get_value()
+                    />
+                </Show>
+
             {move || match app_state.get() {
                 AppState::Login => view! {
                     <LoginForm
@@ -227,6 +256,9 @@ pub fn App() -> impl IntoView {
                         <SideMenu
                             is_open=is_menu_open
                             on_chat_open=Callback::new(move |_| is_chat_open.set(true))
+                            on_settings_open=Callback::new(move |_| is_settings_open.set(true))
+                            on_statistics_open=Callback::new(move |_| is_statistics_open.set(true))
+                            theme=theme.get_value()
                         />
 
                         // Окно чата
@@ -235,6 +267,19 @@ pub fn App() -> impl IntoView {
                             messages=messages
                             ws_sender=ws_sender
                             username=username
+                        />
+
+                        // Окно настроек
+                        <Settings
+                            is_open=is_settings_open
+                            theme=theme.get_value()
+                        />
+
+                        // Окно статистики
+                        <StatisticsWindow
+                            is_open=is_statistics_open
+                            events=state_events
+                            theme=theme.get_value()
                         />
 
                         // Рендерим все курсоры из мапы
@@ -261,6 +306,7 @@ pub fn App() -> impl IntoView {
                     </div>
                 }.into_any(),
             }}
-        </div>
+            </div>
+        </I18nContextProvider>
     }
 }

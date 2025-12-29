@@ -2,6 +2,7 @@ use crate::config::Theme;
 use gloo_net::http::Request;
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
+use crate::i18n::i18n::{t, t_string, use_i18n};
 use shared::auth::{RegisterRequest, RegisterResponse};
 
 #[component]
@@ -12,10 +13,12 @@ pub fn RegisterForm(
     api_path: &'static str,
     theme: Theme,
 ) -> impl IntoView {
+    let i18n = use_i18n();
+
     let (username, set_username) = signal(String::new());
     let (error_message, set_error_message) = signal(Option::<String>::None);
     let (qr_code_data, set_qr_code_data) = signal(Option::<String>::None);
-    let (success_message, set_success_message) = signal(Option::<String>::None);
+    let (_, set_success_message) = signal(Option::<String>::None);
     let (is_loading, set_is_loading) = signal(false);
 
     let on_submit = move |ev: SubmitEvent| {
@@ -23,7 +26,7 @@ pub fn RegisterForm(
 
         let username_val = username.get();
         if username_val.is_empty() {
-            set_error_message.set(Some("Username cannot be empty".to_string()));
+            set_error_message.set(Some(t_string!(i18n, auth.register.error_empty).to_string()));
             return;
         }
 
@@ -84,17 +87,17 @@ pub fn RegisterForm(
     view! {
         <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 20px;">
             <div style=format!("background: {}; padding: 40px; border-radius: 10px; max-width: 500px; width: 100%;", form_bg)>
-                <h1 style="color: white; text-align: center; margin-bottom: 30px;">"Register"</h1>
+                <h1 style="color: white; text-align: center; margin-bottom: 30px;">{t!(i18n, auth.register.title)}</h1>
 
                 <Show when=move || qr_code_data.get().is_none()>
                     <form on:submit=on_submit style="display: flex; flex-direction: column; gap: 20px;">
                         <div style="display: flex; flex-direction: column; gap: 8px;">
-                            <label style="color: #ccc;">"Username"</label>
+                            <label style="color: #ccc;">{t!(i18n, auth.register.username)}</label>
                             <input
                                 type="text"
                                 value=move || username.get()
                                 on:input=move |ev| set_username.set(event_target_value(&ev))
-                                placeholder="Enter your username"
+                                placeholder=move || t_string!(i18n, auth.register.username).to_string()
                                 disabled=move || is_loading.get()
                                 style=format!("padding: 12px; border-radius: 5px; border: 1px solid {}; background: {}; color: {}; font-size: 16px;", input_border, input_bg, input_text)
                             />
@@ -111,7 +114,7 @@ pub fn RegisterForm(
                             disabled=move || is_loading.get()
                             style=format!("padding: 12px; background: {}; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; font-weight: bold;", button_color)
                         >
-                            {move || if is_loading.get() { "Registering..." } else { "Register" }}
+                            {t!(i18n, auth.register.button)}
                         </button>
 
                         <button
@@ -119,7 +122,7 @@ pub fn RegisterForm(
                             on:click=move |_| on_switch_to_login.run(())
                             style=format!("padding: 12px; background: transparent; color: {}; border: 1px solid {}; border-radius: 5px; font-size: 16px; cursor: pointer;", button_color, button_color)
                         >
-                            "Already have an account? Login"
+                            {t!(i18n, auth.register.switch_to_login)}
                         </button>
                     </form>
                 </Show>
@@ -127,7 +130,7 @@ pub fn RegisterForm(
                 <Show when=move || qr_code_data.get().is_some()>
                     <div style="display: flex; flex-direction: column; align-items: center; gap: 20px;">
                         <div style=format!("color: {}; text-align: center; padding: 12px; background: {}; border: 1px solid {}; border-radius: 5px;", success_text, success_bg, success_border)>
-                            {move || success_message.get().unwrap_or_default()}
+                            {t!(i18n, auth.register.success)}
                         </div>
 
                         <div style="background: white; padding: 20px; border-radius: 10px;">
@@ -139,14 +142,14 @@ pub fn RegisterForm(
                         </div>
 
                         <p style="color: #ccc; text-align: center;">
-                            "Scan this QR code with Google Authenticator or similar app"
+                            {t!(i18n, auth.register.qr_instruction)}
                         </p>
 
                         <button
                             on:click=move |_| on_registered.run(())
                             style=format!("padding: 12px 24px; background: {}; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; font-weight: bold;", button_color)
                         >
-                            "Continue to Login"
+                            {t!(i18n, auth.register.back)}
                         </button>
                     </div>
                 </Show>
