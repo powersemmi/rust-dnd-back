@@ -6,6 +6,7 @@ pub fn Cursor(
     username: String,
     #[prop(into)] x: Signal<i32>,
     #[prop(into)] y: Signal<i32>,
+    #[prop(into)] visible: Signal<bool>,
     is_me: bool,
     theme: crate::config::Theme,
 ) -> impl IntoView {
@@ -16,11 +17,13 @@ pub fn Cursor(
     };
 
     let style = move || {
+        let opacity = if visible.get() { "1" } else { "0" };
         format!(
-            "position: absolute; left: {}px; top: {}px; pointer-events: none; transition: {}; z-index: 100;",
+            "position: absolute; left: {}px; top: {}px; pointer-events: none; transition: {}, opacity 0.3s ease-out; z-index: 100; opacity: {};",
             x.get(),
             y.get(),
-            &theme.cursor_transition
+            &theme.cursor_transition,
+            opacity
         )
     };
 

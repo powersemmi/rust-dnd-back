@@ -121,6 +121,12 @@ pub fn connect_websocket(
                     tx.clone(),
                 );
 
+                // Таймер пинга для поддержания WebSocket соединения
+                start_ping_timer(tx.clone());
+
+                // Таймер для скрытия неактивных курсоров
+                start_cursor_cleanup_timer(set_cursors);
+
                 // Основной цикл обработки сообщений
                 process_messages(
                     read,
@@ -217,6 +223,45 @@ fn start_sync_timer(
                     let _ = tx.clone().try_send(Message::Text(json));
                 }
             }
+        }
+    });
+}
+
+fn start_ping_timer(tx: WsSender) {
+    spawn_local(async move {
+        loop {
+            // Пинг каждые 10 минут (600000 мс)
+            TimeoutFuture::new(600_000).await;
+
+            let ping_event = ClientEvent::Ping;
+            if let Ok(json) = serde_json::to_string(&ping_event) {
+                if tx.clone().try_send(Message::Text(json)).is_err() {
+                    log!("⚠️ Failed to send ping - connection may be closed");
+                    break;
+                }
+            }
+        }
+    });
+}
+
+fn start_cursor_cleanup_timer(set_cursors: WriteSignal<HashMap<String, CursorSignals>>) {
+    spawn_local(async move {
+        loop {
+            // Проверяем каждую секунду для более плавной анимации
+            TimeoutFuture::new(1_000).await;
+
+            let now = js_sys::Date::now();
+            let inactivity_threshold = 5_000.0; // 5 секунд
+
+            set_cursors.update(|cursors| {
+                for (_, cursor) in cursors.iter() {
+                    let last_activity = cursor.last_activity.get();
+                    if now - last_activity > inactivity_threshold {
+                        // Скрываем неактивный курсор
+                        cursor.set_visible.set(false);
+                    }
+                }
+            });
         }
     });
 }

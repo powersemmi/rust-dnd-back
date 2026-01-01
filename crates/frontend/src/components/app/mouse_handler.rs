@@ -48,6 +48,8 @@ fn update_local_cursor(
         } else {
             let (rx_x, tx_x) = signal(x);
             let (rx_y, tx_y) = signal(y);
+            let (last_activity, set_last_activity) = signal(0.0);
+            let (visible, set_visible) = signal(false); // Свой курсор по умолчанию скрыт
             map.insert(
                 user.to_string(),
                 CursorSignals {
@@ -55,6 +57,10 @@ fn update_local_cursor(
                     set_x: tx_x,
                     y: rx_y,
                     set_y: tx_y,
+                    last_activity,
+                    set_last_activity,
+                    visible,
+                    set_visible,
                 },
             );
         }

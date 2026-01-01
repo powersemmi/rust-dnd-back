@@ -57,4 +57,8 @@ pub struct CursorSignals {
     pub set_x: WriteSignal<i32>,
     pub y: ReadSignal<i32>,
     pub set_y: WriteSignal<i32>,
+    pub last_activity: ReadSignal<f64>,
+    pub set_last_activity: WriteSignal<f64>,
+    pub visible: ReadSignal<bool>,
+    pub set_visible: WriteSignal<bool>,
 }

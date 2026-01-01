@@ -440,11 +440,18 @@ pub fn App() -> impl IntoView {
                             children=move |(name, cursor_sig)| {
                                 let is_me = name == username.get();
                                 let theme_copy = theme.get_value();
+                                // Свой курсор по умолчанию скрыт
+                                let visible = if is_me {
+                                    Signal::derive(|| false)
+                                } else {
+                                    cursor_sig.visible.into()
+                                };
                                 view! {
                                     <Cursor
                                         username=name.clone()
                                         x=cursor_sig.x
                                         y=cursor_sig.y
+                                        visible=visible
                                         is_me=is_me
                                         theme=theme_copy
                                     />

@@ -156,7 +156,11 @@ pub fn StatisticsWindow(
                                     } else {
                                         view! {
                                             <For
-                                                each=move || events.get()
+                                                each=move || {
+                                                    let mut events_vec = events.get();
+                                                    events_vec.reverse();
+                                                    events_vec
+                                                }
                                                 key=|event| event.version
                                                 children=move |event| {
                                                     view! {
