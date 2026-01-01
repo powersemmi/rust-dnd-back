@@ -89,8 +89,7 @@ pub fn VotingCreate(
     };
 
     view! {
-        <div style="flex: 1; overflow-y: auto; padding: 1.25rem;">
-            <div style="max-width: 37.5rem; margin: 0 auto;">
+        <div style="max-width: 37.5rem; margin: 0 auto;">
                 <div style="margin-bottom: 1.25rem;">
                     <label style=format!("color: {}; display: block; margin-bottom: 0.5rem;", theme.ui_text_secondary)>
                         {move || t!(i18n, voting.question_label)}
@@ -99,7 +98,7 @@ pub fn VotingCreate(
                         type="text"
                         prop:value=move || create_question.get()
                         on:input=move |ev| create_question.set(event_target_value(&ev))
-                        style=format!("width: 100%; padding: 0.625rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.375rem;", theme.ui_bg_primary, theme.ui_text_primary, theme.ui_border)
+                        style=format!("width: 100%; padding: 0.625rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.375rem; box-sizing: border-box;", theme.ui_bg_primary, theme.ui_text_primary, theme.ui_border)
                     />
                 </div>
 
@@ -122,7 +121,7 @@ pub fn VotingCreate(
                                         type="text"
                                         prop:value=option_val.clone()
                                         on:input=move |ev| update_option(idx, event_target_value(&ev))
-                                        style=format!("flex: 1; padding: 0.5rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.375rem;", theme.ui_bg_primary, theme.ui_text_primary, theme.ui_border)
+                                        style=format!("flex: 1; padding: 0.5rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.375rem; box-sizing: border-box;", theme.ui_bg_primary, theme.ui_text_primary, theme.ui_border)
                                     />
                                     {move || {
                                         if create_options.get().len() > 2 {
@@ -194,7 +193,7 @@ pub fn VotingCreate(
                                         type="number"
                                         prop:value=move || create_timer.get()
                                         on:input=move |ev| create_timer.set(event_target_value(&ev))
-                                        style=format!("width: 100%; padding: 0.625rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.375rem;", theme.ui_bg_primary, theme.ui_text_primary, theme.ui_border)
+                                        style=format!("width: 100%; padding: 0.625rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.375rem; box-sizing: border-box;", theme.ui_bg_primary, theme.ui_text_primary, theme.ui_border)
                                         placeholder="60"
                                     />
                                 </div>
@@ -243,7 +242,7 @@ pub fn VotingCreate(
                     }
                 }}
 
-                <div style="display: flex; gap: 0.75rem; margin-top: 1.875rem;">
+                <div style="display: flex; gap: 0.75rem; margin-top: 1.875rem; margin-bottom: 0.5rem;">
                     <button
                         on:click=move |_| submit_create()
                         style=format!("flex: 1; padding: 0.75rem; background: {}; color: {}; border: none; border-radius: 0.375rem; cursor: pointer; font-weight: 500;", theme.ui_button_primary, theme.ui_text_primary)
@@ -257,7 +256,6 @@ pub fn VotingCreate(
                         {move || t!(i18n, voting.cancel_button)}
                     </button>
                 </div>
-            </div>
         </div>
     }
 }

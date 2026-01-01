@@ -5,6 +5,40 @@
     <title>D&D VTT</title>
     <style>
         body { margin: 0; font-family: sans-serif; background: #1a1a1a; color: #eee; overflow: hidden; }
+
+        /* Firefox-style scrollbar */
+        * {
+            scrollbar-width: thin;
+            scrollbar-color: #4a4a4a #2a2a2a;
+        }
+
+        /* WebKit browsers (Chrome, Safari, Edge) */
+        *::-webkit-scrollbar {
+            width: 12px;
+            height: 12px;
+        }
+
+        *::-webkit-scrollbar-track {
+            background: #2a2a2a;
+        }
+
+        *::-webkit-scrollbar-thumb {
+            background-color: #4a4a4a;
+            border-radius: 6px;
+            border: 2px solid #2a2a2a;
+        }
+
+        *::-webkit-scrollbar-thumb:hover {
+            background-color: #5a5a5a;
+        }
+
+        *::-webkit-scrollbar-thumb:active {
+            background-color: #6a6a6a;
+        }
+
+        *::-webkit-scrollbar-corner {
+            background: #2a2a2a;
+        }
         /* Стили для карты и токенов */
         .game-board { position: relative; width: 100vw; height: 100vh; background: #2a2a2a; }
         .token {

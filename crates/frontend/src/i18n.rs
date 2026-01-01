@@ -35,6 +35,10 @@ leptos_i18n::declare_locales! {
             settings: "Settings",
             statistics: "Statistics",
             voting: "Voting",
+            hotkey_chat: "C",
+            hotkey_settings: "S",
+            hotkey_voting: "V",
+            hotkey_statistics: "St",
         },
         settings: {
             title: "Settings",
@@ -43,8 +47,11 @@ leptos_i18n::declare_locales! {
         },
         statistics: {
             title: "Statistics",
+            tab_voting_results: "Voting Results",
+            tab_event_log: "Event Log",
             event_log: "Event Log",
             no_events: "No events yet",
+            no_voting_results: "No completed votings",
             close: "Close",
         },
         chat: {
@@ -56,6 +63,7 @@ leptos_i18n::declare_locales! {
             title: "Voting",
             vote_submitted: "Vote Submitted!",
             waiting_results: "Waiting for other participants to vote...",
+            voting_ended: "Voting has ended",
             tab_list: "List",
             tab_create: "Create",
             no_active_votings: "No active votings",
@@ -137,6 +145,10 @@ leptos_i18n::declare_locales! {
             settings: "Настройки",
             statistics: "Статистика",
             voting: "Голосование",
+            hotkey_chat: "С",
+            hotkey_settings: "Ы",
+            hotkey_voting: "М",
+            hotkey_statistics: "Ст",
         },
         settings: {
             title: "Настройки",
@@ -145,8 +157,11 @@ leptos_i18n::declare_locales! {
         },
         statistics: {
             title: "Статистика",
+            tab_voting_results: "Результаты голосований",
+            tab_event_log: "Журнал событий",
             event_log: "Журнал событий",
             no_events: "Событий пока нет",
+            no_voting_results: "Нет завершённых голосований",
             close: "Закрыть",
         },
         chat: {
@@ -158,6 +173,7 @@ leptos_i18n::declare_locales! {
             title: "Голосование",
             vote_submitted: "Голос принят!",
             waiting_results: "Ожидание голосов других участников...",
+            voting_ended: "Голосование завершено",
             tab_list: "Список",
             tab_create: "Создать",
             no_active_votings: "Нет активных голосований",

@@ -16,8 +16,9 @@ use leptos::task::spawn_local;
 use log::{debug, error};
 use rand::seq::IndexedRandom;
 use shared::events::{
-    ChatMessagePayload, ClientEvent, PresenceAnnouncePayload, PresenceRequestPayload, PresenceResponsePayload, RoomState,
-    SyncSnapshotPayload, SyncSnapshotRequestPayload, SyncVersionPayload, VotingCastPayload, VotingEndPayload,
+    ChatMessagePayload, ClientEvent, PresenceAnnouncePayload, PresenceRequestPayload,
+    PresenceResponsePayload, RoomState, SyncSnapshotPayload, SyncSnapshotRequestPayload,
+    SyncVersionPayload, VotingCastPayload, VotingEndPayload,
     voting::{VotingResultPayload, VotingStartPayload},
 };
 use std::cell::RefCell;
@@ -37,6 +38,10 @@ pub fn connect_websocket(
     conflict_signal: RwSignal<Option<SyncConflict>>,
     votings: RwSignal<HashMap<String, VotingState>>,
     voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
+    has_statistics_notification: RwSignal<bool>,
+    notification_count: RwSignal<u32>,
+    has_chat_notification: RwSignal<bool>,
+    chat_notification_count: RwSignal<u32>,
     config: config::Config,
 ) {
     // Инициализация состояния
@@ -102,6 +107,10 @@ pub fn connect_websocket(
                     conflict_signal,
                     votings,
                     voting_results,
+                    has_statistics_notification,
+                    notification_count,
+                    has_chat_notification,
+                    chat_notification_count,
                 )
                 .await;
             }
@@ -193,6 +202,10 @@ async fn process_messages(
     conflict_signal: RwSignal<Option<SyncConflict>>,
     votings: RwSignal<HashMap<String, VotingState>>,
     voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
+    has_statistics_notification: RwSignal<bool>,
+    notification_count: RwSignal<u32>,
+    has_chat_notification: RwSignal<bool>,
+    chat_notification_count: RwSignal<u32>,
 ) {
     while let Some(msg) = read.next().await {
         match msg {
@@ -214,6 +227,10 @@ async fn process_messages(
                         conflict_signal,
                         votings,
                         voting_results,
+                        has_statistics_notification,
+                        notification_count,
+                        has_chat_notification,
+                        chat_notification_count,
                     );
                 } else {
                     error!("Failed to parse event: {}", text);
@@ -241,6 +258,10 @@ fn handle_event(
     conflict_signal: RwSignal<Option<SyncConflict>>,
     votings: RwSignal<HashMap<String, VotingState>>,
     voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
+    has_statistics_notification: RwSignal<bool>,
+    notification_count: RwSignal<u32>,
+    has_chat_notification: RwSignal<bool>,
+    chat_notification_count: RwSignal<u32>,
 ) {
     match event {
         ClientEvent::ChatMessage(msg) => handle_chat_message(
@@ -252,6 +273,8 @@ fn handle_event(
             room_name,
             messages_signal,
             state_events,
+            has_chat_notification,
+            chat_notification_count,
         ),
         ClientEvent::MouseClickPayload(mouse_event) => {
             handle_mouse_event(mouse_event, my_username, set_cursors)
@@ -279,8 +302,19 @@ fn handle_event(
             conflict_signal,
             voting_results,
         ),
-        ClientEvent::VotingStart(payload) => handle_voting_start(payload, votings, tx, my_username),
-        ClientEvent::VotingCast(payload) => handle_voting_cast(payload, votings),
+        ClientEvent::VotingStart(payload) => handle_voting_start(
+            payload,
+            votings,
+            tx,
+            my_username,
+            local_version,
+            state_events,
+            has_statistics_notification,
+            notification_count,
+        ),
+        ClientEvent::VotingCast(payload) => {
+            handle_voting_cast(payload, votings, local_version, state_events)
+        }
         ClientEvent::VotingResult(payload) => handle_voting_result(
             payload,
             votings,
@@ -291,10 +325,16 @@ fn handle_event(
             room_name,
             state_events,
         ),
-        ClientEvent::VotingEnd(payload) => handle_voting_end(payload, votings),
+        ClientEvent::VotingEnd(payload) => {
+            handle_voting_end(payload, votings, local_version, state_events)
+        }
         ClientEvent::PresenceRequest(payload) => handle_presence_request(payload, tx, my_username),
-        ClientEvent::PresenceResponse(payload) => handle_presence_response(payload, votings),
-        ClientEvent::PresenceAnnounce(payload) => handle_presence_announce(payload, votings),
+        ClientEvent::PresenceResponse(payload) => {
+            handle_presence_response(payload, votings, local_version, state_events)
+        }
+        ClientEvent::PresenceAnnounce(payload) => {
+            handle_presence_announce(payload, votings, local_version, state_events)
+        }
         _ => {}
     }
 }
@@ -308,10 +348,18 @@ fn handle_chat_message(
     room_name: &str,
     messages_signal: RwSignal<Vec<ChatMessagePayload>>,
     state_events: RwSignal<Vec<StateEvent>>,
+    has_chat_notification: RwSignal<bool>,
+    chat_notification_count: RwSignal<u32>,
 ) {
     debug!("Processing ChatMessage from {}", msg.username);
 
     let is_from_me = msg.username == my_username;
+
+    // Если сообщение не от текущего пользователя, увеличиваем счётчик уведомлений
+    if !is_from_me {
+        has_chat_notification.set(true);
+        chat_notification_count.update(|count| *count += 1);
+    }
 
     // Обновляем state и получаем новую версию
     let current_ver = {
@@ -522,10 +570,18 @@ fn handle_voting_start(
     votings: RwSignal<HashMap<String, VotingState>>,
     tx: &WsSender,
     my_username: &str,
+    local_version: &Rc<RefCell<u64>>,
+    state_events: RwSignal<Vec<StateEvent>>,
+    has_statistics_notification: RwSignal<bool>,
+    notification_count: RwSignal<u32>,
 ) {
     debug!("Voting started: {}", payload.question);
     let voting_id = payload.voting_id.clone();
     let timer_seconds = payload.timer_seconds;
+
+    // Устанавливаем уведомление о новом голосовании и увеличиваем счётчик
+    has_statistics_notification.set(true);
+    notification_count.update(|count| *count += 1);
 
     // Отправляем presence response
     let request_id = format!("voting_{}", voting_id);
@@ -538,13 +594,26 @@ fn handle_voting_start(
     }
 
     votings.update(|map| {
-        map.insert(voting_id.clone(), VotingState::Active {
-            voting: payload,
-            participants: vec![],
-            votes: HashMap::new(),
-            remaining_seconds: timer_seconds,
-        });
+        map.insert(
+            voting_id.clone(),
+            VotingState::Active {
+                voting: payload.clone(),
+                participants: vec![],
+                votes: HashMap::new(),
+                remaining_seconds: timer_seconds,
+            },
+        );
     });
+
+    log_event(
+        state_events,
+        *local_version.borrow(),
+        "VOTING_START",
+        &format!(
+            "Voting started: {} (by {})",
+            payload.question, payload.creator
+        ),
+    );
 
     // Запускаем таймер если есть
     if let Some(seconds) = timer_seconds {
@@ -555,7 +624,10 @@ fn handle_voting_start(
                 TimeoutFuture::new(1000).await;
                 remaining -= 1;
                 votings.update(|map| {
-                    if let Some(VotingState::Active { remaining_seconds, .. }) = map.get_mut(&voting_id_timer) {
+                    if let Some(VotingState::Active {
+                        remaining_seconds, ..
+                    }) = map.get_mut(&voting_id_timer)
+                    {
                         *remaining_seconds = Some(remaining);
                     }
                 });
@@ -567,13 +639,25 @@ fn handle_voting_start(
 fn handle_voting_cast(
     payload: VotingCastPayload,
     votings: RwSignal<HashMap<String, VotingState>>,
+    local_version: &Rc<RefCell<u64>>,
+    state_events: RwSignal<Vec<StateEvent>>,
 ) {
-    debug!("Vote cast by {}: {:?}", payload.user, payload.selected_option_ids);
+    debug!(
+        "Vote cast by {}: {:?}",
+        payload.user, payload.selected_option_ids
+    );
     votings.update(|map| {
         if let Some(VotingState::Active { votes, .. }) = map.get_mut(&payload.voting_id) {
-            votes.insert(payload.user.clone(), payload.selected_option_ids);
+            votes.insert(payload.user.clone(), payload.selected_option_ids.clone());
         }
     });
+
+    log_event(
+        state_events,
+        *local_version.borrow(),
+        "VOTING_CAST",
+        &format!("{} voted in {}", payload.user, payload.voting_id),
+    );
 }
 
 fn handle_voting_result(
@@ -635,11 +719,21 @@ fn handle_voting_result(
     );
 }
 
-fn handle_voting_end(payload: VotingEndPayload, votings: RwSignal<HashMap<String, VotingState>>) {
+fn handle_voting_end(
+    payload: VotingEndPayload,
+    _votings: RwSignal<HashMap<String, VotingState>>,
+    local_version: &Rc<RefCell<u64>>,
+    state_events: RwSignal<Vec<StateEvent>>,
+) {
     debug!("Voting ended: {}", payload.voting_id);
-    votings.update(|map| {
-        map.remove(&payload.voting_id);
-    });
+    // Не удаляем голосование, оно уже должно быть в состоянии Results после VotingResult
+    // Просто логируем событие
+    log_event(
+        state_events,
+        *local_version.borrow(),
+        "VOTING_END",
+        &format!("Voting {} ended", payload.voting_id),
+    );
 }
 
 fn handle_presence_request(payload: PresenceRequestPayload, tx: &WsSender, my_username: &str) {
@@ -656,6 +750,8 @@ fn handle_presence_request(payload: PresenceRequestPayload, tx: &WsSender, my_us
 fn handle_presence_response(
     payload: PresenceResponsePayload,
     votings: RwSignal<HashMap<String, VotingState>>,
+    local_version: &Rc<RefCell<u64>>,
+    state_events: RwSignal<Vec<StateEvent>>,
 ) {
     debug!("Presence response from: {}", payload.user);
 
@@ -668,12 +764,21 @@ fn handle_presence_response(
                 }
             }
         });
+
+        log_event(
+            state_events,
+            *local_version.borrow(),
+            "PRESENCE_RESPONSE",
+            &format!("{} joined voting {}", payload.user, voting_id),
+        );
     }
 }
 
 fn handle_presence_announce(
     payload: PresenceAnnouncePayload,
     votings: RwSignal<HashMap<String, VotingState>>,
+    local_version: &Rc<RefCell<u64>>,
+    state_events: RwSignal<Vec<StateEvent>>,
 ) {
     debug!("Presence announce: {:?}", payload.online_users);
 
@@ -684,5 +789,16 @@ fn handle_presence_announce(
                 *participants = payload.online_users.clone();
             }
         });
+
+        log_event(
+            state_events,
+            *local_version.borrow(),
+            "PRESENCE_ANNOUNCE",
+            &format!(
+                "Voting {} participants announced: {}",
+                voting_id,
+                payload.online_users.join(", ")
+            ),
+        );
     }
 }

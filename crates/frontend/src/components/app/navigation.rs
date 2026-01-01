@@ -64,6 +64,10 @@ pub fn create_room_selected_callback(
     conflict_signal: RwSignal<Option<SyncConflict>>,
     votings: RwSignal<HashMap<String, VotingState>>,
     voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
+    has_statistics_notification: RwSignal<bool>,
+    notification_count: RwSignal<u32>,
+    has_chat_notification: RwSignal<bool>,
+    chat_notification_count: RwSignal<u32>,
     cfg: StoredValue<config::Config>,
 ) -> impl Fn(String) + Clone {
     move |selected_room_id: String| {
@@ -82,6 +86,10 @@ pub fn create_room_selected_callback(
             conflict_signal,
             votings,
             voting_results,
+            has_statistics_notification,
+            notification_count,
+            has_chat_notification,
+            chat_notification_count,
             cfg.get_value(),
         );
     }

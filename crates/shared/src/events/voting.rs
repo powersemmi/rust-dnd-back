@@ -55,6 +55,8 @@ pub struct VotingOptionResult {
 #[cfg_attr(feature = "validation", derive(Validate))]
 pub struct VotingResultPayload {
     pub voting_id: String,
+    pub question: String,
+    pub options: Vec<VotingOption>,
     pub results: Vec<VotingOptionResult>,
     pub total_participants: u32,
     pub total_voted: u32,

@@ -22,6 +22,7 @@ pub struct Theme {
     pub ui_button_primary: &'static str, // #2563eb - primary action buttons
     pub ui_button_danger: &'static str, // #ef4444 - danger/delete buttons
     pub ui_success: &'static str,    // #10b981 - success states
+    pub ui_notification: &'static str, // #fbbf24 - notification/alert color (yellow)
 }
 
 #[derive(Clone)]
@@ -102,6 +103,7 @@ impl Default for Theme {
             ui_button_primary: color_env!("UI_BUTTON_PRIMARY"),
             ui_button_danger: color_env!("UI_BUTTON_DANGER"),
             ui_success: color_env!("UI_SUCCESS"),
+            ui_notification: color_env!("UI_NOTIFICATION"),
         }
     }
 }

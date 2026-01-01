@@ -13,10 +13,12 @@ use super::navigation::create_room_selected_callback;
 use super::{
     AppState, create_login_success_callback, create_mouse_move_handler, create_navigation_callbacks,
 };
+use crate::components::voting::VotingWindow;
 use crate::config;
 use crate::i18n::i18n::{I18nContextProvider, Locale};
 use crate::utils::{auth, token_refresh};
 use leptos::prelude::*;
+use leptos::wasm_bindgen::JsCast;
 use shared::events::ChatMessagePayload;
 use std::collections::HashMap;
 
@@ -85,6 +87,21 @@ pub fn App() -> impl IntoView {
     let is_settings_open = RwSignal::new(false);
     let is_statistics_open = RwSignal::new(false);
     let is_voting_open = RwSignal::new(false);
+    let has_statistics_notification = RwSignal::new(false);
+    let notification_count = RwSignal::new(0u32);
+    let has_chat_notification = RwSignal::new(false);
+    let chat_notification_count = RwSignal::new(0u32);
+
+    // Отслеживание активного окна (последнее открытое)
+    #[derive(Clone, Copy, PartialEq)]
+    enum ActiveWindow {
+        None,
+        Chat,
+        Settings,
+        Statistics,
+        Voting,
+    }
+    let active_window = RwSignal::new(ActiveWindow::None);
 
     // Загружаем токен и username из localStorage если есть
     if initial_state == AppState::RoomSelection {
@@ -127,18 +144,88 @@ pub fn App() -> impl IntoView {
         conflict_signal,
         votings,
         voting_results,
+        has_statistics_notification,
+        notification_count,
+        has_chat_notification,
+        chat_notification_count,
         cfg,
     ));
 
     // Обработчик движения мыши
     let on_mouse_move = create_mouse_move_handler(app_state, username, set_cursors, ws_sender, cfg);
 
+    // Обработчик клавиатуры для хоткеев (использует code для независимости от раскладки)
+    let on_keydown = move |ev: web_sys::KeyboardEvent| {
+        if app_state.get() != AppState::Connected {
+            return;
+        }
+
+        // Проверяем, что фокус не на input/textarea элементах
+        if let Some(target) = ev.target() {
+            if let Some(element) = target.dyn_ref::<web_sys::HtmlElement>() {
+                let tag_name = element.tag_name().to_lowercase();
+                if tag_name == "input" || tag_name == "textarea" {
+                    return;
+                }
+            }
+        }
+
+        let code = ev.code();
+
+        match code.as_str() {
+            "Escape" => {
+                // Закрываем активное окно
+                match active_window.get() {
+                    ActiveWindow::Chat => is_chat_open.set(false),
+                    ActiveWindow::Settings => is_settings_open.set(false),
+                    ActiveWindow::Voting => is_voting_open.set(false),
+                    ActiveWindow::Statistics => is_statistics_open.set(false),
+                    ActiveWindow::None => {}
+                }
+            }
+            "KeyC" => {
+                is_chat_open.set(true);
+                active_window.set(ActiveWindow::Chat);
+                has_chat_notification.set(false);
+                chat_notification_count.set(0);
+            }
+            "KeyS" => {
+                is_settings_open.set(true);
+                active_window.set(ActiveWindow::Settings);
+            }
+            "KeyV" => {
+                is_voting_open.set(true);
+                active_window.set(ActiveWindow::Voting);
+                has_statistics_notification.set(false);
+                notification_count.set(0);
+            }
+            _ => {}
+        }
+    };
+
     let bg_color = theme.get_value().background_color;
+
+    // Effect для автофокуса на главный div при подключении
+    Effect::new(move || {
+        if app_state.get() == AppState::Connected {
+            if let Some(window) = web_sys::window() {
+                if let Some(document) = window.document() {
+                    if let Some(element) = document.get_element_by_id("main-app-container") {
+                        let _ = element.dyn_ref::<web_sys::HtmlElement>().map(|el| el.focus());
+                    }
+                }
+            }
+        }
+    });
+
     view! {
         <I18nContextProvider>
             <div
-                style=format!("width: 100vw; height: 100vh; background: {}; overflow: hidden;", bg_color)
+                id="main-app-container"
+                tabindex="0"
+                style=format!("width: 100vw; height: 100vh; background: {}; overflow: hidden; outline: none;", bg_color)
                 on:mousemove=on_mouse_move
+                on:keydown=on_keydown
             >
                 <Show when=move || app_state.get() != AppState::Connected>
                     <LanguageSelector
@@ -182,10 +269,30 @@ pub fn App() -> impl IntoView {
                         // Боковое меню
                         <SideMenu
                             is_open=is_menu_open
-                            on_chat_open=Callback::new(move |_| is_chat_open.set(true))
-                            on_settings_open=Callback::new(move |_| is_settings_open.set(true))
-                            on_statistics_open=Callback::new(move |_| is_statistics_open.set(true))
-                            on_voting_open=Callback::new(move |_| is_voting_open.set(true))
+                            on_chat_open=Callback::new(move |_| {
+                                is_chat_open.set(true);
+                                active_window.set(ActiveWindow::Chat);
+                                has_chat_notification.set(false);
+                                chat_notification_count.set(0);
+                            })
+                            on_settings_open=Callback::new(move |_| {
+                                is_settings_open.set(true);
+                                active_window.set(ActiveWindow::Settings);
+                            })
+                            on_statistics_open=Callback::new(move |_| {
+                                is_statistics_open.set(true);
+                                active_window.set(ActiveWindow::Statistics);
+                            })
+                            on_voting_open=Callback::new(move |_| {
+                                is_voting_open.set(true);
+                                active_window.set(ActiveWindow::Voting);
+                                has_statistics_notification.set(false);
+                                notification_count.set(0);
+                            })
+                            has_statistics_notification=has_statistics_notification.read_only()
+                            notification_count=notification_count.read_only()
+                            has_chat_notification=has_chat_notification.read_only()
+                            chat_notification_count=chat_notification_count.read_only()
                             theme=theme.get_value()
                         />
 
@@ -195,6 +302,8 @@ pub fn App() -> impl IntoView {
                             messages=messages
                             ws_sender=ws_sender
                             username=username
+                            is_active=Signal::derive(move || active_window.get() == ActiveWindow::Chat)
+                            on_focus=Callback::new(move |_| active_window.set(ActiveWindow::Chat))
                             theme=theme.get_value()
                         />
 
@@ -209,6 +318,8 @@ pub fn App() -> impl IntoView {
                             is_open=is_statistics_open
                             events=state_events
                             voting_results=voting_results
+                            is_active=Signal::derive(move || active_window.get() == ActiveWindow::Statistics)
+                            on_focus=Callback::new(move |_| active_window.set(ActiveWindow::Statistics))
                             theme=theme.get_value()
                         />
 
@@ -219,12 +330,14 @@ pub fn App() -> impl IntoView {
                         />
 
                         // Окно голосований
-                        <super::super::voting::VotingWindow
+                        <VotingWindow
                             show_voting_window=is_voting_open
                             votings=votings
                             voted_in=voted_in
                             username=username
                             ws_sender=ws_sender
+                            is_active=Signal::derive(move || active_window.get() == ActiveWindow::Voting)
+                            on_focus=Callback::new(move |_| active_window.set(ActiveWindow::Voting))
                             on_create_voting=move |mut payload| {
                                 payload.creator = username.get();
                                 if let Some(mut sender) = ws_sender.get() {

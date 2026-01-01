@@ -2,7 +2,7 @@ use super::types::VotingState;
 use crate::config::Theme;
 use crate::i18n::i18n::{t, use_i18n};
 use leptos::prelude::*;
-use shared::events::voting::{VotingType, VotingOptionResult};
+use shared::events::voting::VotingType;
 use shared::events::{ClientEvent, VotingCastPayload};
 use std::collections::{HashMap, HashSet};
 
@@ -13,13 +13,20 @@ pub fn VotingActive(
     username: ReadSignal<String>,
     ws_sender: ReadSignal<Option<super::super::websocket::WsSender>>,
     voted_in: RwSignal<HashSet<String>>,
-    selected_options: RwSignal<HashSet<String>>,
+    selected_options_map: RwSignal<HashMap<String, HashSet<String>>>,
     theme: Theme,
 ) -> impl IntoView {
     let i18n = use_i18n();
 
     let cast_vote = move |vid: String| {
-        let selected = selected_options.get().into_iter().collect::<Vec<_>>();
+        let selected = selected_options_map
+            .get()
+            .get(&vid)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .collect::<Vec<_>>();
+
         if selected.is_empty() {
             return;
         }
@@ -39,15 +46,13 @@ pub fn VotingActive(
         voted_in.update(|set| {
             set.insert(vid);
         });
-
-        selected_options.set(HashSet::new());
     };
 
     view! {
         {move || {
             voting.get().get(&voting_id).cloned().map(|state| {
                 match state {
-                    VotingState::Active { voting, participants, votes, remaining_seconds } => {
+                    VotingState::Active { voting, participants: _, votes, remaining_seconds } => {
                         let vid = voting_id.clone();
                         let vid_check = voting_id.clone();
                         let voting_type_stored = StoredValue::new(voting.voting_type.clone());
@@ -55,121 +60,24 @@ pub fn VotingActive(
 
                         let has_voted = voted_in.get().contains(&vid_check);
 
-                        if has_voted {
-                            // Показываем промежуточные результаты
-                            let total_participants = participants.len() as u32;
-                            let total_voted = votes.len() as u32;
-
-                            // Подсчитываем результаты
-                            let mut results_map: HashMap<String, u32> = HashMap::new();
-                            let mut voters_map: HashMap<String, Vec<String>> = HashMap::new();
-                            for (user, option_ids) in votes.iter() {
-                                for option_id in option_ids {
-                                    *results_map.entry(option_id.clone()).or_insert(0) += 1;
-                                    voters_map.entry(option_id.clone()).or_default().push(user.clone());
-                                }
+                        // Подсчитываем промежуточные результаты для отображения
+                        let total_voted_before = votes.len() as u32;
+                        let mut vote_counts: HashMap<String, u32> = HashMap::new();
+                        for option_ids in votes.values() {
+                            for option_id in option_ids {
+                                *vote_counts.entry(option_id.clone()).or_insert(0) += 1;
                             }
+                        }
+                        let vote_counts_stored = StoredValue::new(vote_counts);
+                        let total_voted_stored = StoredValue::new(total_voted_before);
 
-                            let results: Vec<VotingOptionResult> = results_map.into_iter().map(|(option_id, count)| {
-                                let voters = if !voting.is_anonymous {
-                                    voters_map.get(&option_id).cloned()
-                                } else {
-                                    None
-                                };
-                                VotingOptionResult {
-                                    option_id,
-                                    count,
-                                    voters,
-                                }
-                            }).collect();
+                        let vid_for_button_click = vid.clone();
+                        let vid_for_button_disabled = vid.clone();
+                        let vid_for_button_style = vid.clone();
 
-                            let results_stored = StoredValue::new(results);
-
-                            view! {
-                                <div>
-                                    <h3 style=format!("color: {}; margin-top: 0;", theme.ui_text_primary)>{voting.question.clone()}</h3>
-
-                                    <div style=format!("padding: 1.25rem; background: {}; border-radius: 0.5rem; text-align: center; margin-bottom: 1rem;", theme.ui_bg_primary)>
-                                        <div style="font-size: 3rem; margin-bottom: 1rem;">"✓"</div>
-                                        <h4 style=format!("color: {}; margin: 0 0 0.5rem 0;", theme.ui_success)>{t!(i18n, voting.vote_submitted)}</h4>
-                                        <p style=format!("color: {}; margin: 0;", theme.ui_text_secondary)>{t!(i18n, voting.waiting_results)}</p>
-                                    </div>
-
-                                    <div style=format!("margin-bottom: 1.25rem; padding: 0.9375rem; background: {}; border-radius: 0.5rem;", theme.ui_bg_secondary)>
-                                        <p style=format!("color: {}; margin: 0.3125rem 0;", theme.ui_text_primary)>
-                                            <strong>{t!(i18n, voting.total_participants)}</strong>
-                                            {" "}
-                                            {total_participants}
-                                        </p>
-                                        <p style=format!("color: {}; margin: 0.3125rem 0;", theme.ui_text_primary)>
-                                            <strong>{t!(i18n, voting.total_voted)}</strong>
-                                            {" "}
-                                            {total_voted}
-                                        </p>
-                                    </div>
-
-                                    <For
-                                        each=move || results_stored.get_value()
-                                        key=|r| r.option_id.clone()
-                                        children=move |result| {
-                                            let option_text = options_stored.get_value().iter()
-                                                .find(|o| o.id == result.option_id)
-                                                .map(|o| o.text.clone())
-                                                .unwrap_or_default();
-
-                                            let percentage = if total_voted > 0 {
-                                                (result.count as f32 / total_voted as f32 * 100.0) as u32
-                                            } else {
-                                                0
-                                            };
-
-                                            let voters_opt = result.voters.clone();
-                                            let is_anonymous = voting.is_anonymous;
-
-                                            view! {
-                                                <div style="margin-bottom: 1.25rem;">
-                                                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                                                        <span style=format!("color: {}; font-weight: bold;", theme.ui_text_primary)>{option_text}</span>
-                                                        <span style=format!("color: {};", theme.ui_text_secondary)>
-                                                            {result.count}
-                                                            {" "}
-                                                            {t!(i18n, voting.votes_count)}
-                                                            {" ("}
-                                                            {percentage}
-                                                            {"%)"}</span>
-                                                    </div>
-                                                    <div style=format!("width: 100%; height: 1.5rem; background: {}; border-radius: 0.75rem; overflow: hidden;", theme.ui_bg_primary)>
-                                                        <div style=format!("height: 100%; background: {}; width: {}%;", theme.ui_button_primary, percentage) />
-                                                    </div>
-                                                    {move || {
-                                                        if !is_anonymous {
-                                                            if let Some(ref voters) = voters_opt {
-                                                                view! {
-                                                                    <div style=format!("margin-top: 0.5rem; padding: 0.5rem; background: {}; border-radius: 0.375rem;", theme.ui_bg_primary)>
-                                                                        <p style=format!("color: {}; font-size: 0.75rem; margin: 0;", theme.ui_text_secondary)>
-                                                                            {t!(i18n, voting.voters_label)}
-                                                                            {" "}
-                                                                            {voters.join(", ")}
-                                                                        </p>
-                                                                    </div>
-                                                                }.into_any()
-                                                            } else {
-                                                                view! {}.into_any()
-                                                            }
-                                                        } else {
-                                                            view! {}.into_any()
-                                                        }
-                                                    }}
-                                                </div>
-                                            }
-                                        }
-                                    />
-                                </div>
-                            }.into_any()
-                        } else {
-                            view! {
-                                <div>
-                                    <h3 style=format!("color: {}; margin-top: 0;", theme.ui_text_primary)>{voting.question.clone()}</h3>
+                        view! {
+                            <div>
+                                    <h3 style=format!("color: {}; margin-top: 0; margin-bottom: 1rem;", theme.ui_text_primary)>{voting.question.clone()}</h3>
 
                                     {move || {
                                         if let Some(timer) = remaining_seconds {
@@ -187,7 +95,7 @@ pub fn VotingActive(
                                         }
                                     }}
 
-                                    <p style=format!("color: {}; margin-bottom: 1.25rem;", theme.ui_text_secondary)>
+                                    <p style=format!("color: {}; margin: 0 0 1.25rem 0;", theme.ui_text_secondary)>
                                         {move || match voting.voting_type {
                                             VotingType::SingleChoice => view! { {t!(i18n, voting.select_one)} }.into_any(),
                                             VotingType::MultipleChoice => view! { {t!(i18n, voting.select_multiple)} }.into_any(),
@@ -200,38 +108,78 @@ pub fn VotingActive(
                                         children=move |option| {
                                             let option_id = option.id.clone();
                                             let option_id_check = option.id.clone();
+                                            let option_id_check_style = option.id.clone();
+                                            let option_id_stats = option.id.clone();
                                             let voting_type = voting_type_stored.get_value();
+                                            let vid_for_style = vid.clone();
+                                            let vid_for_click = vid.clone();
+                                            let vid_for_checked = vid_check.clone();
+
+                                            let vote_count = vote_counts_stored.get_value().get(&option_id_stats).copied().unwrap_or(0);
+                                            let percentage = if total_voted_stored.get_value() > 0 {
+                                                (vote_count as f32 / total_voted_stored.get_value() as f32 * 100.0) as u32
+                                            } else {
+                                                0
+                                            };
+
                                             view! {
                                                 <div
-                                                    style=format!("padding: 0.75rem; margin-bottom: 0.625rem; background: {}; border: 0.125rem solid {}; border-radius: 0.5rem; cursor: pointer;", theme.ui_bg_primary, theme.ui_border)
+                                                    style=move || {
+                                                        let selected_opts = selected_options_map.get().get(&vid_for_style).cloned().unwrap_or_default();
+                                                        let is_selected = selected_opts.contains(&option_id_check_style);
+                                                        let border_color = if is_selected { &theme.ui_button_primary } else { &theme.ui_border };
+                                                        let bg_color = if is_selected {
+                                                            // Полупрозрачный цвет кнопки для выделения
+                                                            format!("{}20", theme.ui_button_primary)
+                                                        } else {
+                                                            theme.ui_bg_primary.to_string()
+                                                        };
+                                                        let cursor = if has_voted { "not-allowed" } else { "pointer" };
+                                                        let opacity = if has_voted { "0.6" } else { "1" };
+                                                        format!("padding: 0.75rem; margin-bottom: 0.625rem; background: {}; border: 0.125rem solid {}; border-radius: 0.5rem; cursor: {}; opacity: {}; overflow: hidden;", bg_color, border_color, cursor, opacity)
+                                                    }
                                                     on:click=move |_| {
-                                                        selected_options.update(|sel| {
-                                                            match voting_type {
-                                                                VotingType::SingleChoice => {
-                                                                    sel.clear();
-                                                                    sel.insert(option_id.clone());
-                                                                }
-                                                                VotingType::MultipleChoice => {
-                                                                    if sel.contains(&option_id) {
-                                                                        sel.remove(&option_id);
-                                                                    } else {
-                                                                        sel.insert(option_id.clone());
+                                                        if !has_voted {
+                                                            let vid_clone = vid_for_click.clone();
+                                                            selected_options_map.update(|map| {
+                                                                let entry = map.entry(vid_clone).or_insert_with(HashSet::new);
+                                                                match voting_type {
+                                                                    VotingType::SingleChoice => {
+                                                                        entry.clear();
+                                                                        entry.insert(option_id.clone());
+                                                                    }
+                                                                    VotingType::MultipleChoice => {
+                                                                        if entry.contains(&option_id) {
+                                                                            entry.remove(&option_id);
+                                                                        } else {
+                                                                            entry.insert(option_id.clone());
+                                                                        }
                                                                     }
                                                                 }
-                                                            }
-                                                        });
+                                                            });
+                                                        }
                                                     }
                                                 >
-                                                    <div style="display: flex; align-items: center; gap: 0.625rem;">
+                                                    <div style="display: flex; align-items: center; gap: 0.625rem; margin-bottom: 0.5rem;">
                                                         <input
                                                             type={match voting_type {
                                                                 VotingType::SingleChoice => "radio",
                                                                 VotingType::MultipleChoice => "checkbox",
                                                             }}
-                                                            checked=move || selected_options.get().contains(&option_id_check)
-                                                            style="width: 1.125rem; height: 1.125rem;"
+                                                            checked=move || {
+                                                                selected_options_map.get().get(&vid_for_checked).map(|s| s.contains(&option_id_check)).unwrap_or(false)
+                                                            }
+                                                            disabled=has_voted
+                                                            style="width: 1.125rem; height: 1.125rem; pointer-events: none;"
                                                         />
-                                                        <span style=format!("color: {}; font-size: 1rem;", theme.ui_text_primary)>{option.text.clone()}</span>
+                                                        <span style=format!("color: {}; font-size: 1rem; flex: 1;", theme.ui_text_primary)>{option.text.clone()}</span>
+                                                        <span style=format!("color: {}; font-size: 0.875rem; font-weight: bold;", theme.ui_text_secondary)>
+                                                            {format!("{} ({}%)", vote_count, percentage)}
+                                                        </span>
+                                                    </div>
+                                                    // График
+                                                    <div style=format!("width: 100%; height: 0.375rem; background: {}; border-radius: 0.1875rem; overflow: hidden; margin-left: 1.75rem;", theme.ui_bg_secondary)>
+                                                        <div style=format!("height: 100%; background: {}; width: {}%;", theme.ui_button_primary, percentage) />
                                                     </div>
                                                 </div>
                                             }
@@ -239,17 +187,115 @@ pub fn VotingActive(
                                     />
 
                                     <button
-                                        on:click=move |_| cast_vote(vid.clone())
-                                        disabled=move || selected_options.get().is_empty()
-                                        style=format!("width: 100%; padding: 0.75rem; background: {}; color: {}; border: none; border-radius: 0.375rem; font-size: 1rem; cursor: pointer; font-weight: bold;", theme.ui_button_primary, theme.ui_text_primary)
+                                        on:click=move |_| cast_vote(vid_for_button_click.clone())
+                                        disabled=move || {
+                                            let selected = selected_options_map.get().get(&vid_for_button_disabled).cloned().unwrap_or_default();
+                                            selected.is_empty() || has_voted
+                                        }
+                                        style=move || {
+                                            let selected = selected_options_map.get().get(&vid_for_button_style).cloned().unwrap_or_default();
+                                            let is_disabled = selected.is_empty() || has_voted;
+                                            let opacity = if is_disabled { "0.5" } else { "1" };
+                                            let cursor = if is_disabled { "not-allowed" } else { "pointer" };
+                                            format!("width: 100%; padding: 0.75rem; margin-top: 1rem; background: {}; color: {}; border: none; border-radius: 0.375rem; font-size: 1rem; cursor: {}; font-weight: bold; opacity: {};", theme.ui_button_primary, theme.ui_text_primary, cursor, opacity)
+                                        }
                                     >
                                         {move || t!(i18n, voting.submit_vote)}
                                     </button>
-                                </div>
-                            }.into_any()
-                        }
+                            </div>
+                        }.into_any()
                     }
-                    _ => view! {}.into_any()
+                    VotingState::Results { voting, results, total_participants, total_voted } => {
+                        let has_voted = voted_in.get().contains(&voting_id);
+                        let options_stored = StoredValue::new(voting.options.clone());
+                        let results_stored = StoredValue::new(results.clone());
+
+                        view! {
+                            <div>
+                                <h3 style=format!("color: {}; margin-top: 0; margin-bottom: 1rem;", theme.ui_text_primary)>{voting.question.clone()}</h3>
+
+                                <div style=format!("padding: 1.25rem; background: {}; border-radius: 0.5rem; text-align: center; margin-bottom: 1rem;", theme.ui_bg_primary)>
+                                    <div style="font-size: 3rem; margin-bottom: 1rem;">"✓"</div>
+                                    <h4 style=format!("color: {}; margin: 0 0 0.5rem 0;", theme.ui_success)>{t!(i18n, voting.completed_status)}</h4>
+                                    {if has_voted {
+                                        view! { <p style=format!("color: {}; margin: 0;", theme.ui_text_secondary)>{t!(i18n, voting.vote_submitted)}</p> }.into_any()
+                                    } else {
+                                        view! { <p style=format!("color: {}; margin: 0;", theme.ui_text_secondary)>{t!(i18n, voting.voting_ended)}</p> }.into_any()
+                                    }}
+                                </div>
+
+                                <div style=format!("margin-bottom: 1.25rem; padding: 0.9375rem; background: {}; border-radius: 0.5rem;", theme.ui_bg_secondary)>
+                                    <p style=format!("color: {}; margin: 0.3125rem 0;", theme.ui_text_primary)>
+                                        <strong>{t!(i18n, voting.total_participants)}</strong>
+                                        {" "}
+                                        {total_participants}
+                                    </p>
+                                    <p style=format!("color: {}; margin: 0.3125rem 0;", theme.ui_text_primary)>
+                                        <strong>{t!(i18n, voting.total_voted)}</strong>
+                                        {" "}
+                                        {total_voted}
+                                    </p>
+                                </div>
+
+                                <For
+                                    each=move || results_stored.get_value()
+                                    key=|r| r.option_id.clone()
+                                    children=move |result| {
+                                        let option_text = options_stored.get_value().iter()
+                                            .find(|o| o.id == result.option_id)
+                                            .map(|o| o.text.clone())
+                                            .unwrap_or_default();
+
+                                        let percentage = if total_voted > 0 {
+                                            (result.count as f32 / total_voted as f32 * 100.0) as u32
+                                        } else {
+                                            0
+                                        };
+
+                                        let voters_opt = result.voters.clone();
+                                        let is_anonymous = voting.is_anonymous;
+
+                                        view! {
+                                            <div style="margin-bottom: 1.25rem;">
+                                                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                                                    <span style=format!("color: {}; font-weight: bold;", theme.ui_text_primary)>{option_text}</span>
+                                                    <span style=format!("color: {};", theme.ui_text_secondary)>
+                                                        {result.count}
+                                                        {" "}
+                                                        {t!(i18n, voting.votes_count)}
+                                                        {" ("}
+                                                        {percentage}
+                                                        {"%)"}</span>
+                                                </div>
+                                                <div style=format!("width: 100%; height: 1.5rem; background: {}; border-radius: 0.75rem; overflow: hidden;", theme.ui_bg_primary)>
+                                                    <div style=format!("height: 100%; background: {}; width: {}%;", theme.ui_button_primary, percentage) />
+                                                </div>
+                                                {move || {
+                                                    if !is_anonymous {
+                                                        if let Some(ref voters) = voters_opt {
+                                                            view! {
+                                                                <div style=format!("margin-top: 0.5rem; padding: 0.5rem; background: {}; border-radius: 0.375rem;", theme.ui_bg_primary)>
+                                                                    <p style=format!("color: {}; font-size: 0.75rem; margin: 0;", theme.ui_text_secondary)>
+                                                                        {t!(i18n, voting.voters_label)}
+                                                                        {" "}
+                                                                        {voters.join(", ")}
+                                                                    </p>
+                                                                </div>
+                                                            }.into_any()
+                                                        } else {
+                                                            view! {}.into_any()
+                                                        }
+                                                    } else {
+                                                        view! {}.into_any()
+                                                    }
+                                                }}
+                                            </div>
+                                        }
+                                    }
+                                />
+                            </div>
+                        }.into_any()
+                    }
                 }
             }).unwrap_or_else(|| view! {
                 <p style=format!("color: {};", theme.ui_text_secondary)>{move || t!(i18n, voting.voting_not_found)}</p>

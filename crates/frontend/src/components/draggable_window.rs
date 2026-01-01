@@ -1,7 +1,7 @@
 use crate::config::Theme;
+use leptos::logging::log;
 use leptos::prelude::*;
 use leptos::web_sys::MouseEvent;
-use leptos::logging::log;
 
 #[component]
 pub fn DraggableWindow(
@@ -13,6 +13,8 @@ pub fn DraggableWindow(
     #[prop(default = 500)] initial_height: i32,
     #[prop(default = 300)] min_width: i32,
     #[prop(default = 200)] min_height: i32,
+    #[prop(into, optional)] is_active: Signal<bool>,
+    #[prop(optional)] on_focus: Option<Callback<()>>,
     theme: Theme,
     children: Children,
 ) -> impl IntoView {
@@ -77,16 +79,30 @@ pub fn DraggableWindow(
         <div
             on:mousemove=on_global_mouse_move
             on:mouseup=on_global_mouse_up
-            style=move || format!(
-                "position: fixed; left: {}px; top: {}px; width: {}px; height: {}px; background: {}; border: 0.0625rem solid {}; border-radius: 0.5rem; box-shadow: 0 0.25rem 1.25rem rgba(0,0,0,0.5); z-index: 1001; display: {}; flex-direction: column; overflow: hidden;",
-                pos_x.get(),
-                pos_y.get(),
-                width.get(),
-                height.get(),
-                theme.ui_bg_primary,
-                theme.ui_border,
-                display()
-            )
+            on:mousedown=move |_| {
+                if let Some(callback) = on_focus {
+                    callback.run(());
+                }
+            }
+            on:mouseenter=move |_| {
+                if let Some(callback) = on_focus {
+                    callback.run(());
+                }
+            }
+            style=move || {
+                let opacity = if is_active.get() { "1" } else { "0.7" };
+                format!(
+                    "position: fixed; left: {}px; top: {}px; width: {}px; height: {}px; background: {}; border: 0.0625rem solid {}; border-radius: 0.5rem; box-shadow: 0 0.25rem 1.25rem rgba(0,0,0,0.5); z-index: 1001; display: {}; flex-direction: column; overflow: hidden; opacity: {}; transition: opacity 0.2s;",
+                    pos_x.get(),
+                    pos_y.get(),
+                    width.get(),
+                    height.get(),
+                    theme.ui_bg_primary,
+                    theme.ui_border,
+                    display(),
+                    opacity
+                )
+            }
         >
                 // Header
                 <div

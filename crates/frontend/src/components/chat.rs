@@ -12,6 +12,8 @@ pub fn ChatWindow(
     #[prop(into)] messages: RwSignal<Vec<ChatMessagePayload>>,
     ws_sender: ReadSignal<Option<WsSender>>,
     username: ReadSignal<String>,
+    #[prop(into, optional)] is_active: Signal<bool>,
+    #[prop(optional)] on_focus: Option<Callback<()>>,
     theme: Theme,
 ) -> impl IntoView {
     let i18n = use_i18n();
@@ -47,6 +49,8 @@ pub fn ChatWindow(
             initial_height=500
             min_width=300
             min_height=200
+            is_active=is_active
+            on_focus=on_focus.unwrap_or_else(|| Callback::new(|_| {}))
             theme=theme.clone()
         >
             <div style="flex: 1; overflow-y: auto; padding: 0.9375rem; display: flex; flex-direction: column; gap: 0.625rem;">

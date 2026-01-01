@@ -8,12 +8,13 @@ use std::collections::HashMap;
 pub fn VotingList(
     votings: RwSignal<HashMap<String, VotingState>>,
     active_tab: RwSignal<VotingTab>,
+    open_voting_tabs: RwSignal<HashMap<String, String>>,
     theme: Theme,
 ) -> impl IntoView {
     let i18n = use_i18n();
 
     view! {
-        <div style="flex: 1; overflow-y: auto; padding: 1.25rem;">
+        <div>
             {move || {
                 if votings.get().is_empty() {
                     view! {
@@ -23,19 +24,38 @@ pub fn VotingList(
                     }.into_any()
                 } else {
                     view! {
-                        <div style="display: flex; flex-direction: column; gap: 0.625rem;">
+                        <div style="display: flex; flex-direction: column; gap: 1rem;">
                             <For
                                 each=move || {
-                                    votings.get().into_iter().collect::<Vec<_>>()
+                                    // Показываем только активные голосования
+                                    votings.get().into_iter()
+                                        .filter(|(_, state)| matches!(state, VotingState::Active { .. }))
+                                        .collect::<Vec<_>>()
                                 }
                                 key=|(id, _)| id.clone()
                                 children=move |item| {
                                     let (voting_id, state) = item;
                                     let vid = voting_id.clone();
+
+                                    // Получаем вопрос для таба
+                                    let question = match &state {
+                                        VotingState::Active { voting, .. } => voting.question.clone(),
+                                        VotingState::Results { voting, .. } => voting.question.clone(),
+                                    };
+
                                     view! {
                                         <div
-                                            style=format!("padding: 0.9375rem; background: {}; border-radius: 0.5rem; cursor: pointer;", theme.ui_bg_primary)
-                                            on:click=move |_| active_tab.set(VotingTab::Voting(vid.clone()))
+                                            style=format!("padding: 1rem; background: {}; border-radius: 0.5rem; cursor: pointer; transition: background 0.2s;", theme.ui_bg_primary)
+                                            on:click=move |_| {
+                                                let vid_clone = vid.clone();
+                                                let question_clone = question.clone();
+                                                // Добавляем таб в список открытых
+                                                open_voting_tabs.update(|tabs| {
+                                                    tabs.insert(vid_clone.clone(), question_clone);
+                                                });
+                                                // Переключаемся на таб
+                                                active_tab.set(VotingTab::Voting(vid_clone));
+                                            }
                                         >
                                             {move || {
                                                 match &state {

@@ -10,6 +10,7 @@ pub mod room_selector;
 pub mod settings;
 pub mod side_menu;
 pub mod statistics;
+pub mod tab_bar;
 pub mod voting;
 pub mod websocket;
 
