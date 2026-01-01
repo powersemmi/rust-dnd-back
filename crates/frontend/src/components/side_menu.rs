@@ -17,8 +17,8 @@ pub fn SideMenu(
     };
 
     let form_bg = theme.ui_bg_primary;
-    let button_bg = theme.ui_bg_secondary;
-    let button_hover = theme.ui_border;
+    let button_bg = theme.ui_button_primary;
+    let button_hover = "#1d4ed8"; // Darker blue for hover
 
     view! {
         <div>

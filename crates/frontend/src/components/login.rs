@@ -132,7 +132,7 @@ pub fn LoginForm(
                     <button
                         type="button"
                         on:click=move |_| on_switch_to_register.run(())
-                        style=format!("padding: 0.75rem; background: transparent; color: {}; border: 0.0625rem solid {}; border-radius: 0.3125rem; font-size: 1rem; cursor: pointer;", theme.ui_button_primary, theme.ui_button_primary)
+                        style=format!("padding: 0.75rem; background: {}; color: {}; border: none; border-radius: 0.3125rem; font-size: 1rem; cursor: pointer; font-weight: bold;", theme.ui_bg_secondary, theme.ui_text_primary)
                     >
                         {t!(i18n, auth.login.switch_to_register)}
                     </button>

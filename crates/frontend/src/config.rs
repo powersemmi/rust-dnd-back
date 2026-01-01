@@ -12,9 +12,6 @@ pub struct Theme {
     pub mouse_throttle_ms: u64,
     pub background_color: &'static str,
     pub cursor_transition: &'static str,
-    // Window colors
-    pub window_bg: &'static str,
-    pub window_close_button: &'static str,
     // Common UI colors (reusable across all components)
     pub ui_bg_primary: &'static str, // #2a2a2a - main background for cards, inputs
     pub ui_bg_secondary: &'static str, // #374151 - secondary background
@@ -81,8 +78,6 @@ impl Default for Theme {
             mouse_throttle_ms: parse_u64(MOUSE_THROTTLE_MS_STR),
             background_color: env!("BACKGROUND_COLOR"),
             cursor_transition: env!("CURSOR_TRANSITION"),
-            window_bg: env!("WINDOW_BG"),
-            window_close_button: env!("WINDOW_CLOSE_BUTTON"),
             ui_bg_primary: env!("UI_BG_PRIMARY"),
             ui_bg_secondary: env!("UI_BG_SECONDARY"),
             ui_border: env!("UI_BORDER"),

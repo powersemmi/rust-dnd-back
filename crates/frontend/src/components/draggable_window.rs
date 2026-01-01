@@ -15,8 +15,8 @@ pub fn DraggableWindow(
     theme: Theme,
     children: Children,
 ) -> impl IntoView {
-    let window_bg = theme.window_bg;
-    let close_button_color = theme.window_close_button;
+    let window_bg = theme.ui_bg_primary;
+    let close_button_color = theme.ui_button_danger;
 
     let (pos_x, set_pos_x) = signal(initial_x);
     let (pos_y, set_pos_y) = signal(initial_y);
@@ -93,7 +93,7 @@ pub fn DraggableWindow(
                     on:mousedown=on_header_mouse_down
                     style=format!(
                         "padding: 0.75rem 0.9375rem; background: {}; border-bottom: 0.0625rem solid {}; cursor: move; display: flex; justify-content: space-between; align-items: center; user-select: none;",
-                        theme.ui_bg_primary, theme.ui_border
+                        theme.ui_bg_secondary, theme.ui_border
                     )
                 >
                     <h3 style=format!("margin: 0; color: {}; font-size: 1rem;", theme.ui_text_primary)>
