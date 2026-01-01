@@ -30,7 +30,11 @@ pub fn create_login_success_callback(
 /// Создает все навигационные callbacks
 pub fn create_navigation_callbacks(
     set_app_state: WriteSignal<AppState>,
-) -> (impl Fn(()) + Clone, impl Fn(()) + Clone, impl Fn(()) + Clone) {
+) -> (
+    impl Fn(()) + Clone,
+    impl Fn(()) + Clone,
+    impl Fn(()) + Clone,
+) {
     let on_registered = move |_| {
         set_app_state.set(AppState::Login);
     };

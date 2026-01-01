@@ -9,8 +9,10 @@ use super::super::settings::Settings;
 use super::super::side_menu::SideMenu;
 use super::super::statistics::{StateEvent, StatisticsWindow};
 use super::super::websocket::{CursorSignals, SyncConflict, WsSender};
-use super::{AppState, create_login_success_callback, create_mouse_move_handler, create_navigation_callbacks};
 use super::navigation::create_room_selected_callback;
+use super::{
+    AppState, create_login_success_callback, create_mouse_move_handler, create_navigation_callbacks,
+};
 use crate::config;
 use crate::i18n::i18n::{I18nContextProvider, Locale};
 use crate::utils::{auth, token_refresh};
@@ -116,13 +118,7 @@ pub fn App() -> impl IntoView {
     ));
 
     // Обработчик движения мыши
-    let on_mouse_move = create_mouse_move_handler(
-        app_state,
-        username,
-        set_cursors,
-        ws_sender,
-        cfg,
-    );
+    let on_mouse_move = create_mouse_move_handler(app_state, username, set_cursors, ws_sender, cfg);
 
     let bg_color = theme.get_value().background_color;
     view! {

@@ -247,9 +247,14 @@ fn handle_event(
         ClientEvent::SyncVersionAnnounce(payload) => {
             handle_sync_announce(payload, sync_candidates, local_version, state_events)
         }
-        ClientEvent::SyncSnapshotRequest(payload) => {
-            handle_snapshot_request(payload, tx, room_state, local_version, my_username, state_events)
-        }
+        ClientEvent::SyncSnapshotRequest(payload) => handle_snapshot_request(
+            payload,
+            tx,
+            room_state,
+            local_version,
+            my_username,
+            state_events,
+        ),
         ClientEvent::SyncSnapshot(payload) => handle_snapshot(
             payload,
             room_state,
@@ -326,11 +331,7 @@ fn handle_mouse_event(
     });
 }
 
-fn handle_sync_request(
-    tx: &WsSender,
-    local_version: &Rc<RefCell<u64>>,
-    my_username: &str,
-) {
+fn handle_sync_request(tx: &WsSender, local_version: &Rc<RefCell<u64>>, my_username: &str) {
     let current_ver = *local_version.borrow();
     let announce = ClientEvent::SyncVersionAnnounce(SyncVersionPayload {
         username: my_username.to_string(),
@@ -427,7 +428,10 @@ fn handle_snapshot(
                 state_events,
                 local_ver,
                 "SYNC_CONFLICT",
-                &format!("Conflict detected: local v{} vs remote v{}", local_ver, remote_ver),
+                &format!(
+                    "Conflict detected: local v{} vs remote v{}",
+                    local_ver, remote_ver
+                ),
             );
         }
         Ok(()) if remote_ver > local_ver => {

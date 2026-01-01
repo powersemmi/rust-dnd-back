@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use wasm_bindgen_futures::spawn_local;
 
-use super::AppState;
 use super::super::websocket::WsSender;
+use super::AppState;
 
 /// Обрабатывает движение мыши и отправляет координаты через WebSocket
 pub fn create_mouse_move_handler(
