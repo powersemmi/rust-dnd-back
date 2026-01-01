@@ -1,32 +1,22 @@
-use super::chat::ChatWindow;
-use super::conflict_resolver::ConflictResolver;
-use super::cursor::Cursor;
-use super::language_selector::LanguageSelector;
-use super::login::LoginForm;
-use super::register::RegisterForm;
-use super::room_selector::RoomSelector;
-use super::settings::Settings;
-use super::side_menu::SideMenu;
-use super::statistics::{StateEvent, StatisticsWindow};
-use super::websocket::{CursorSignals, SyncConflict, WsSender, connect_websocket};
+use super::super::chat::ChatWindow;
+use super::super::conflict_resolver::ConflictResolver;
+use super::super::cursor::Cursor;
+use super::super::language_selector::LanguageSelector;
+use super::super::login::LoginForm;
+use super::super::register::RegisterForm;
+use super::super::room_selector::RoomSelector;
+use super::super::settings::Settings;
+use super::super::side_menu::SideMenu;
+use super::super::statistics::{StateEvent, StatisticsWindow};
+use super::super::websocket::{CursorSignals, SyncConflict, WsSender};
+use super::{AppState, create_login_success_callback, create_mouse_move_handler, create_navigation_callbacks};
+use super::navigation::create_room_selected_callback;
 use crate::config;
 use crate::i18n::i18n::{I18nContextProvider, Locale};
-use crate::utils::token_refresh;
+use crate::utils::{auth, token_refresh};
 use leptos::prelude::*;
-use shared::events::{
-    ChatMessagePayload, ClientEvent, MouseClickPayload, mouse::MouseEventTypeEnum,
-};
+use shared::events::ChatMessagePayload;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use wasm_bindgen_futures::spawn_local;
-
-#[derive(Clone, Copy, PartialEq)]
-enum AppState {
-    Login,
-    Register,
-    RoomSelection,
-    Connected,
-}
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -50,16 +40,8 @@ pub fn App() -> impl IntoView {
     let api_path = cfg.get_value().api.api_path;
 
     // Проверяем наличие токена в localStorage при загрузке
-    let initial_state = if let Some(window) = web_sys::window() {
-        if let Ok(Some(storage)) = window.local_storage() {
-            if storage.get_item("jwt_token").ok().flatten().is_some() {
-                AppState::RoomSelection
-            } else {
-                AppState::Login
-            }
-        } else {
-            AppState::Login
-        }
+    let initial_state = if auth::load_and_validate_token().is_some() {
+        AppState::RoomSelection
     } else {
         AppState::Login
     };
@@ -93,132 +75,54 @@ pub fn App() -> impl IntoView {
 
     // Загружаем токен и username из localStorage если есть
     if initial_state == AppState::RoomSelection {
-        if let Some(window) = web_sys::window() {
-            if let Ok(Some(storage)) = window.local_storage() {
-                if let Ok(Some(token)) = storage.get_item("jwt_token") {
-                    set_jwt_token.set(token);
-                    // Запускаем автоматическое обновление токена
-                    token_refresh::start_token_refresh(back_url, api_path);
-                }
-                if let Ok(Some(user)) = storage.get_item("username") {
-                    set_username.set(user);
-                }
+        if let Some(token) = auth::load_and_validate_token() {
+            set_jwt_token.set(token);
+            // Запускаем автоматическое обновление токена
+            token_refresh::start_token_refresh(back_url, api_path);
+            if let Some(user) = auth::load_username() {
+                set_username.set(user);
             }
+        } else {
+            set_app_state.set(AppState::Login);
         }
     }
 
-    // Callbacks для навигации между экранами
-    let on_login_success = move |token: String| {
-        set_jwt_token.set(token);
-        // Запускаем автоматическое обновление токена после успешного входа
-        token_refresh::start_token_refresh(back_url, api_path);
-        if let Some(window) = web_sys::window() {
-            if let Ok(Some(storage)) = window.local_storage() {
-                if let Ok(Some(user)) = storage.get_item("username") {
-                    set_username.set(user);
-                }
-            }
-        }
-        set_app_state.set(AppState::RoomSelection);
-    };
+    // Callbacks для навигации между экранами - сохраняем в StoredValue для использования в view!
+    let on_login_success = StoredValue::new(create_login_success_callback(
+        set_jwt_token,
+        set_username,
+        set_app_state,
+        back_url,
+        api_path,
+    ));
 
-    let on_registered = move |_| {
-        set_app_state.set(AppState::Login);
-    };
+    let (on_registered, on_switch_to_register, on_switch_to_login) =
+        create_navigation_callbacks(set_app_state);
+    let on_registered = StoredValue::new(on_registered);
+    let on_switch_to_register = StoredValue::new(on_switch_to_register);
+    let on_switch_to_login = StoredValue::new(on_switch_to_login);
 
-    let on_switch_to_register = move |_| {
-        set_app_state.set(AppState::Register);
-    };
+    let on_room_selected = StoredValue::new(create_room_selected_callback(
+        set_room_id,
+        set_app_state,
+        jwt_token,
+        username,
+        set_ws_sender,
+        set_cursors,
+        messages,
+        state_events,
+        conflict_signal,
+        cfg,
+    ));
 
-    let on_switch_to_login = move |_| {
-        set_app_state.set(AppState::Login);
-    };
-
-    let on_room_selected = move |selected_room_id: String| {
-        set_room_id.set(selected_room_id.clone());
-        set_app_state.set(AppState::Connected);
-
-        // Подключаемся к WebSocket
-        connect_websocket(
-            selected_room_id,
-            jwt_token.get(),
-            username.get_untracked(), // <-- Передаем username
-            set_ws_sender,
-            set_cursors,
-            messages,
-            state_events,
-            conflict_signal,
-            cfg.get_value(),
-        );
-    };
-
-    // Обработчик движения мыши (отправляем свои данные)
-    let on_mouse_move = move |ev: leptos::web_sys::MouseEvent| {
-        if app_state.get() != AppState::Connected {
-            return;
-        }
-
-        let x = ev.client_x();
-        let y = ev.client_y();
-        let user = username.get();
-
-        set_cursors.update(|map| {
-            if let Some(cursor_signals) = map.get(&user) {
-                cursor_signals.set_x.set(x);
-                cursor_signals.set_y.set(y);
-            } else {
-                let (rx_x, tx_x) = signal(x);
-                let (rx_y, tx_y) = signal(y);
-                map.insert(
-                    user.clone(),
-                    CursorSignals {
-                        x: rx_x,
-                        set_x: tx_x,
-                        y: rx_y,
-                        set_y: tx_y,
-                    },
-                );
-            }
-        });
-
-        let event = ClientEvent::MouseClickPayload(MouseClickPayload {
-            x,
-            y,
-            mouse_event_type: MouseEventTypeEnum::Move,
-            user_id: user.clone(),
-        });
-
-        // Отправляем в канал (а оттуда оно уйдет в сокет)
-        thread_local! {
-            static IS_THROTTLED: AtomicBool = AtomicBool::new(false);
-        }
-
-        let should_send = IS_THROTTLED.with(|throttled| {
-            if !throttled.load(Ordering::Relaxed) {
-                throttled.store(true, Ordering::Relaxed);
-                true
-            } else {
-                false
-            }
-        });
-
-        if should_send {
-            // ИСПРАВЛЕНИЕ: Используем try_send
-            if let Some(mut sender) = ws_sender.get() {
-                if let Ok(json) = serde_json::to_string(&event) {
-                    let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
-                }
-            }
-
-            let throttle_ms = cfg.get_value().theme.mouse_throttle_ms;
-            spawn_local(async move {
-                gloo_timers::future::sleep(std::time::Duration::from_millis(throttle_ms)).await;
-                IS_THROTTLED.with(|throttled| {
-                    throttled.store(false, Ordering::Relaxed);
-                });
-            });
-        }
-    };
+    // Обработчик движения мыши
+    let on_mouse_move = create_mouse_move_handler(
+        app_state,
+        username,
+        set_cursors,
+        ws_sender,
+        cfg,
+    );
 
     let bg_color = theme.get_value().background_color;
     view! {
@@ -237,8 +141,8 @@ pub fn App() -> impl IntoView {
             {move || match app_state.get() {
                 AppState::Login => view! {
                     <LoginForm
-                        on_login_success=Callback::new(on_login_success)
-                        on_switch_to_register=Callback::new(on_switch_to_register)
+                        on_login_success=Callback::new(move |token| on_login_success.get_value()(token))
+                        on_switch_to_register=Callback::new(move |_| on_switch_to_register.get_value()(()))
                         back_url=back_url
                         api_path=api_path
                         theme=theme.get_value()
@@ -246,8 +150,8 @@ pub fn App() -> impl IntoView {
                 }.into_any(),
                 AppState::Register => view! {
                     <RegisterForm
-                        on_registered=Callback::new(on_registered)
-                        on_switch_to_login=Callback::new(on_switch_to_login)
+                        on_registered=Callback::new(move |_| on_registered.get_value()(()))
+                        on_switch_to_login=Callback::new(move |_| on_switch_to_login.get_value()(()))
                         back_url=back_url
                         api_path=api_path
                         theme=theme.get_value()
@@ -255,7 +159,7 @@ pub fn App() -> impl IntoView {
                 }.into_any(),
                 AppState::RoomSelection => view! {
                     <RoomSelector
-                        on_room_selected=Callback::new(on_room_selected)
+                        on_room_selected=Callback::new(move |room| on_room_selected.get_value()(room))
                         theme=theme.get_value()
                     />
                 }.into_any(),
@@ -309,14 +213,13 @@ pub fn App() -> impl IntoView {
                                 cursors.get().into_iter().collect::<Vec<_>>()
                             }
                             key=|(name, _)| name.clone()
-                            children=move |(name, cursor_sig)| { // <-- cursor_sig это CursorSignals
+                            children=move |(name, cursor_sig)| {
                                 let is_me = name == username.get();
                                 let theme_copy = theme.get_value();
                                 view! {
-                                    // Передаем сигналы из структуры
                                     <Cursor
                                         username=name.clone()
-                                        x=cursor_sig.x // ReadSignal реализует Into<Signal>
+                                        x=cursor_sig.x
                                         y=cursor_sig.y
                                         is_me=is_me
                                         theme=theme_copy
