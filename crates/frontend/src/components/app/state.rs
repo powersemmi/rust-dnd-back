@@ -228,6 +228,18 @@ pub fn App() -> impl IntoView {
                             on_create_voting=move |mut payload| {
                                 payload.creator = username.get();
                                 if let Some(mut sender) = ws_sender.get() {
+                                    // Отправляем presence request чтобы собрать участников
+                                    let request_id = format!("voting_{}", payload.voting_id);
+                                    let presence_req = shared::events::PresenceRequestPayload {
+                                        request_id,
+                                        requester: username.get(),
+                                    };
+                                    let event = shared::events::ClientEvent::PresenceRequest(presence_req);
+                                    if let Ok(json) = serde_json::to_string(&event) {
+                                        let _ = sender.try_send(gloo_net::websocket::Message::Text(json.clone()));
+                                    }
+
+                                    // Отправляем событие начала голосования
                                     let event = shared::events::ClientEvent::VotingStart(payload);
                                     if let Ok(json) = serde_json::to_string(&event) {
                                         let _ = sender.try_send(gloo_net::websocket::Message::Text(json));

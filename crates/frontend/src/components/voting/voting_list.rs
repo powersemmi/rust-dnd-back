@@ -39,9 +39,9 @@ pub fn VotingList(
                                         >
                                             {move || {
                                                 match &state {
-                                                    VotingState::Active(v) => view! {
+                                                    VotingState::Active { voting, .. } => view! {
                                                         <div>
-                                                            <h4 style=format!("color: {}; margin: 0 0 0.5rem 0;", theme.ui_text_primary)>{v.question.clone()}</h4>
+                                                            <h4 style=format!("color: {}; margin: 0 0 0.5rem 0;", theme.ui_text_primary)>{voting.question.clone()}</h4>
                                                             <span style=format!("color: {};", theme.ui_success)>{t!(i18n, voting.active_status)}</span>
                                                         </div>
                                                     }.into_any(),

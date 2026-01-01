@@ -1,9 +1,15 @@
 use shared::events::VotingStartPayload;
 use shared::events::voting::VotingOptionResult;
+use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
 pub enum VotingState {
-    Active(VotingStartPayload),
+    Active {
+        voting: VotingStartPayload,
+        participants: Vec<String>,
+        votes: HashMap<String, Vec<String>>, // user -> selected_option_ids
+        remaining_seconds: Option<u32>,
+    },
     Results {
         voting: VotingStartPayload,
         results: Vec<VotingOptionResult>,

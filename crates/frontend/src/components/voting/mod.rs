@@ -14,7 +14,8 @@ use crate::components::draggable_window::DraggableWindow;
 use crate::config::Theme;
 use crate::i18n::i18n::{t, t_string, use_i18n};
 use leptos::prelude::*;
-use shared::events::VotingStartPayload;
+use shared::events::{ClientEvent, VotingResultPayload, VotingStartPayload};
+use shared::events::voting::VotingOptionResult;
 use std::collections::{HashMap, HashSet};
 
 #[component]
@@ -34,6 +35,77 @@ pub fn VotingWindow(
     let switch_to_tab = move |tab: VotingTab| {
         active_tab.set(tab);
     };
+
+    // Effect для автоматического завершения голосований
+    Effect::new(move |_| {
+        let votings_snapshot = votings.get();
+        for (voting_id, state) in votings_snapshot.iter() {
+            if let VotingState::Active { voting, participants, votes, remaining_seconds } = state {
+                let creator = voting.creator.clone();
+                let my_name = username.get();
+
+                // Только создатель голосования завершает его
+                if creator == my_name {
+                    let total_participants = participants.len();
+                    let total_voted = votes.len();
+
+                    // Условие 1: Все проголосовали
+                    let all_voted = total_participants > 0 && total_voted == total_participants;
+
+                    // Условие 2: Таймер истёк
+                    let timer_expired = *remaining_seconds == Some(0);
+
+                    if all_voted || timer_expired {
+                        // Подсчитываем результаты
+                        let mut results_map: HashMap<String, u32> = HashMap::new();
+                        let mut voters_map: HashMap<String, Vec<String>> = HashMap::new();
+
+                        for (user, option_ids) in votes.iter() {
+                            for option_id in option_ids {
+                                *results_map.entry(option_id.clone()).or_insert(0) += 1;
+                                voters_map.entry(option_id.clone()).or_default().push(user.clone());
+                            }
+                        }
+
+                        let results: Vec<VotingOptionResult> = voting.options.iter().map(|opt| {
+                            VotingOptionResult {
+                                option_id: opt.id.clone(),
+                                count: *results_map.get(&opt.id).unwrap_or(&0),
+                                voters: if !voting.is_anonymous {
+                                    voters_map.get(&opt.id).cloned()
+                                } else {
+                                    None
+                                },
+                            }
+                        }).collect();
+
+                        let result_payload = VotingResultPayload {
+                            voting_id: voting_id.clone(),
+                            results,
+                            total_participants: total_participants as u32,
+                            total_voted: total_voted as u32,
+                        };
+
+                        // Отправляем результат
+                        if let Some(mut sender) = ws_sender.get() {
+                            let event = ClientEvent::VotingResult(result_payload);
+                            if let Ok(json) = serde_json::to_string(&event) {
+                                let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
+                            }
+
+                            // Отправляем событие завершения
+                            let end_event = ClientEvent::VotingEnd(shared::events::VotingEndPayload {
+                                voting_id: voting_id.clone(),
+                            });
+                            if let Ok(json) = serde_json::to_string(&end_event) {
+                                let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
 
     view! {
         <DraggableWindow
@@ -78,10 +150,10 @@ pub fn VotingWindow(
                         each=move || {
                             votings.get()
                                 .iter()
-                                .filter(|(_, state)| matches!(state, VotingState::Active(_)))
+                                .filter(|(_, state)| matches!(state, VotingState::Active { .. }))
                                 .map(|(id, state)| {
                                     let voting = match state {
-                                        VotingState::Active(v) => v.clone(),
+                                        VotingState::Active { voting, .. } => voting.clone(),
                                         _ => unreachable!(),
                                     };
                                     (id.clone(), voting)

@@ -47,10 +47,15 @@ const fn parse_u32(s: &str) -> u32 {
     let bytes = s.as_bytes();
     let mut result = 0u32;
     let mut i = 0;
+    // Пропускаем кавычки если они есть
+    while i < bytes.len() && (bytes[i] == b'"' || bytes[i] == b'\'') {
+        i += 1;
+    }
     while i < bytes.len() {
         let digit = bytes[i].wrapping_sub(b'0');
-        assert!(digit < 10, "Invalid digit in numeric string");
-        result = result * 10 + digit as u32;
+        if digit < 10 {
+            result = result * 10 + digit as u32;
+        }
         i += 1;
     }
     result
@@ -60,33 +65,43 @@ const fn parse_u64(s: &str) -> u64 {
     let bytes = s.as_bytes();
     let mut result = 0u64;
     let mut i = 0;
+    while i < bytes.len() && (bytes[i] == b'"' || bytes[i] == b'\'') {
+        i += 1;
+    }
     while i < bytes.len() {
         let digit = bytes[i].wrapping_sub(b'0');
-        assert!(digit < 10, "Invalid digit in numeric string");
-        result = result * 10 + digit as u64;
+        if digit < 10 {
+            result = result * 10 + digit as u64;
+        }
         i += 1;
     }
     result
 }
 
+macro_rules! color_env {
+    ($name:expr) => {
+        env!($name).trim_matches(|c| c == '"' || c == '\'')
+    };
+}
+
 impl Default for Theme {
     fn default() -> Self {
         Self {
-            my_cursor_color: env!("MY_CURSOR_COLOR"),
-            other_cursor_color: env!("OTHER_CURSOR_COLOR"),
+            my_cursor_color: color_env!("MY_CURSOR_COLOR"),
+            other_cursor_color: color_env!("OTHER_CURSOR_COLOR"),
             cursor_size: parse_u32(CURSOR_SIZE_STR),
             mouse_throttle_ms: parse_u64(MOUSE_THROTTLE_MS_STR),
-            background_color: env!("BACKGROUND_COLOR"),
-            cursor_transition: env!("CURSOR_TRANSITION"),
-            ui_bg_primary: env!("UI_BG_PRIMARY"),
-            ui_bg_secondary: env!("UI_BG_SECONDARY"),
-            ui_border: env!("UI_BORDER"),
-            ui_text_primary: env!("UI_TEXT_PRIMARY"),
-            ui_text_secondary: env!("UI_TEXT_SECONDARY"),
-            ui_text_muted: env!("UI_TEXT_MUTED"),
-            ui_button_primary: env!("UI_BUTTON_PRIMARY"),
-            ui_button_danger: env!("UI_BUTTON_DANGER"),
-            ui_success: env!("UI_SUCCESS"),
+            background_color: color_env!("BACKGROUND_COLOR"),
+            cursor_transition: color_env!("CURSOR_TRANSITION"),
+            ui_bg_primary: color_env!("UI_BG_PRIMARY"),
+            ui_bg_secondary: color_env!("UI_BG_SECONDARY"),
+            ui_border: color_env!("UI_BORDER"),
+            ui_text_primary: color_env!("UI_TEXT_PRIMARY"),
+            ui_text_secondary: color_env!("UI_TEXT_SECONDARY"),
+            ui_text_muted: color_env!("UI_TEXT_MUTED"),
+            ui_button_primary: color_env!("UI_BUTTON_PRIMARY"),
+            ui_button_danger: color_env!("UI_BUTTON_DANGER"),
+            ui_success: color_env!("UI_SUCCESS"),
         }
     }
 }
@@ -94,9 +109,9 @@ impl Default for Theme {
 impl Default for Api {
     fn default() -> Self {
         Self {
-            back_url: env!("BACK_URL"),
-            ws_path: env!("WS_PATH"),
-            api_path: env!("API_PATH"),
+            back_url: color_env!("BACK_URL"),
+            ws_path: color_env!("WS_PATH"),
+            api_path: color_env!("API_PATH"),
         }
     }
 }

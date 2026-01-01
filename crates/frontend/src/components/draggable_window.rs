@@ -1,6 +1,7 @@
 use crate::config::Theme;
 use leptos::prelude::*;
 use leptos::web_sys::MouseEvent;
+use leptos::logging::log;
 
 #[component]
 pub fn DraggableWindow(
@@ -15,9 +16,6 @@ pub fn DraggableWindow(
     theme: Theme,
     children: Children,
 ) -> impl IntoView {
-    let window_bg = theme.ui_bg_primary;
-    let close_button_color = theme.ui_button_danger;
-
     let (pos_x, set_pos_x) = signal(initial_x);
     let (pos_y, set_pos_y) = signal(initial_y);
     let (width, set_width) = signal(initial_width);
@@ -73,6 +71,8 @@ pub fn DraggableWindow(
 
     let display = move || if is_open.get() { "flex" } else { "none" };
 
+    log!("DraggableWindow:{}", theme.ui_bg_primary);
+
     view! {
         <div
             on:mousemove=on_global_mouse_move
@@ -83,7 +83,7 @@ pub fn DraggableWindow(
                 pos_y.get(),
                 width.get(),
                 height.get(),
-                window_bg,
+                theme.ui_bg_primary,
                 theme.ui_border,
                 display()
             )
@@ -103,7 +103,7 @@ pub fn DraggableWindow(
                         on:click=move |_| is_open.set(false)
                         style=format!(
                             "background: {}; border: none; color: {}; padding: 0.25rem 0.625rem; border-radius: 0.25rem; cursor: pointer; font-size: 1.125rem; font-weight: bold; line-height: 1;",
-                            close_button_color, theme.ui_text_primary
+                            theme.ui_button_danger, theme.ui_text_primary
                         )
                     >
                         "×"

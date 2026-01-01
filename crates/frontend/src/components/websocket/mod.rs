@@ -16,8 +16,8 @@ use leptos::task::spawn_local;
 use log::{debug, error};
 use rand::seq::IndexedRandom;
 use shared::events::{
-    ChatMessagePayload, ClientEvent, PresenceRequestPayload, PresenceResponsePayload, RoomState,
-    SyncSnapshotPayload, SyncSnapshotRequestPayload, SyncVersionPayload, VotingEndPayload,
+    ChatMessagePayload, ClientEvent, PresenceAnnouncePayload, PresenceRequestPayload, PresenceResponsePayload, RoomState,
+    SyncSnapshotPayload, SyncSnapshotRequestPayload, SyncVersionPayload, VotingCastPayload, VotingEndPayload,
     voting::{VotingResultPayload, VotingStartPayload},
 };
 use std::cell::RefCell;
@@ -279,10 +279,8 @@ fn handle_event(
             conflict_signal,
             voting_results,
         ),
-        ClientEvent::VotingStart(payload) => handle_voting_start(payload, votings),
-        ClientEvent::VotingCast(payload) => {
-            debug!("Received VotingCast: {:?}", payload);
-        }
+        ClientEvent::VotingStart(payload) => handle_voting_start(payload, votings, tx, my_username),
+        ClientEvent::VotingCast(payload) => handle_voting_cast(payload, votings),
         ClientEvent::VotingResult(payload) => handle_voting_result(
             payload,
             votings,
@@ -295,12 +293,8 @@ fn handle_event(
         ),
         ClientEvent::VotingEnd(payload) => handle_voting_end(payload, votings),
         ClientEvent::PresenceRequest(payload) => handle_presence_request(payload, tx, my_username),
-        ClientEvent::PresenceResponse(payload) => {
-            debug!("Received PresenceResponse: {:?}", payload);
-        }
-        ClientEvent::PresenceAnnounce(payload) => {
-            debug!("Received PresenceAnnounce: {:?}", payload);
-        }
+        ClientEvent::PresenceResponse(payload) => handle_presence_response(payload, votings),
+        ClientEvent::PresenceAnnounce(payload) => handle_presence_announce(payload, votings),
         _ => {}
     }
 }
@@ -526,11 +520,59 @@ fn log_event(
 fn handle_voting_start(
     payload: VotingStartPayload,
     votings: RwSignal<HashMap<String, VotingState>>,
+    tx: &WsSender,
+    my_username: &str,
 ) {
     debug!("Voting started: {}", payload.question);
     let voting_id = payload.voting_id.clone();
+    let timer_seconds = payload.timer_seconds;
+
+    // Отправляем presence response
+    let request_id = format!("voting_{}", voting_id);
+    let response = ClientEvent::PresenceResponse(PresenceResponsePayload {
+        request_id,
+        user: my_username.to_string(),
+    });
+    if let Ok(json) = serde_json::to_string(&response) {
+        let _ = tx.clone().try_send(Message::Text(json));
+    }
+
     votings.update(|map| {
-        map.insert(voting_id, VotingState::Active(payload));
+        map.insert(voting_id.clone(), VotingState::Active {
+            voting: payload,
+            participants: vec![],
+            votes: HashMap::new(),
+            remaining_seconds: timer_seconds,
+        });
+    });
+
+    // Запускаем таймер если есть
+    if let Some(seconds) = timer_seconds {
+        let voting_id_timer = voting_id.clone();
+        spawn_local(async move {
+            let mut remaining = seconds;
+            while remaining > 0 {
+                TimeoutFuture::new(1000).await;
+                remaining -= 1;
+                votings.update(|map| {
+                    if let Some(VotingState::Active { remaining_seconds, .. }) = map.get_mut(&voting_id_timer) {
+                        *remaining_seconds = Some(remaining);
+                    }
+                });
+            }
+        });
+    }
+}
+
+fn handle_voting_cast(
+    payload: VotingCastPayload,
+    votings: RwSignal<HashMap<String, VotingState>>,
+) {
+    debug!("Vote cast by {}: {:?}", payload.user, payload.selected_option_ids);
+    votings.update(|map| {
+        if let Some(VotingState::Active { votes, .. }) = map.get_mut(&payload.voting_id) {
+            votes.insert(payload.user.clone(), payload.selected_option_ids);
+        }
     });
 }
 
@@ -548,8 +590,11 @@ fn handle_voting_result(
 
     // Обновляем текущее состояние голосования
     votings.update(|map| {
-        if let Some(VotingState::Active(voting)) = map.get(&payload.voting_id) {
-            let voting_clone = voting.clone();
+        if let Some(state) = map.get(&payload.voting_id) {
+            let voting_clone = match state {
+                VotingState::Active { voting, .. } => voting.clone(),
+                _ => return,
+            };
             map.insert(
                 payload.voting_id.clone(),
                 VotingState::Results {
@@ -605,5 +650,39 @@ fn handle_presence_request(payload: PresenceRequestPayload, tx: &WsSender, my_us
     });
     if let Ok(json) = serde_json::to_string(&response) {
         let _ = tx.clone().try_send(Message::Text(json));
+    }
+}
+
+fn handle_presence_response(
+    payload: PresenceResponsePayload,
+    votings: RwSignal<HashMap<String, VotingState>>,
+) {
+    debug!("Presence response from: {}", payload.user);
+
+    // Извлекаем voting_id из request_id (формат: "voting_{voting_id}")
+    if let Some(voting_id) = payload.request_id.strip_prefix("voting_") {
+        votings.update(|map| {
+            if let Some(VotingState::Active { participants, .. }) = map.get_mut(voting_id) {
+                if !participants.contains(&payload.user) {
+                    participants.push(payload.user.clone());
+                }
+            }
+        });
+    }
+}
+
+fn handle_presence_announce(
+    payload: PresenceAnnouncePayload,
+    votings: RwSignal<HashMap<String, VotingState>>,
+) {
+    debug!("Presence announce: {:?}", payload.online_users);
+
+    // Извлекаем voting_id из request_id
+    if let Some(voting_id) = payload.request_id.strip_prefix("voting_") {
+        votings.update(|map| {
+            if let Some(VotingState::Active { participants, .. }) = map.get_mut(voting_id) {
+                *participants = payload.online_users.clone();
+            }
+        });
     }
 }
