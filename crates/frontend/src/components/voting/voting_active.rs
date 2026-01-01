@@ -1,6 +1,6 @@
 use super::types::VotingState;
 use crate::config::Theme;
-use crate::i18n::i18n::{t, use_i18n};
+use crate::i18n::i18n::{t, t_string, use_i18n};
 use leptos::prelude::*;
 use shared::events::voting::VotingType;
 use shared::events::{ClientEvent, VotingCastPayload};
@@ -172,7 +172,16 @@ pub fn VotingActive(
                                                             disabled=has_voted
                                                             style="width: 1.125rem; height: 1.125rem; pointer-events: none;"
                                                         />
-                                                        <span style=format!("color: {}; font-size: 1rem; flex: 1;", theme.ui_text_primary)>{option.text.clone()}</span>
+                                                        <span style=format!("color: {}; font-size: 1rem; flex: 1;", theme.ui_text_primary)>
+                                                            {move || {
+                                                                let text = option.text.clone();
+                                                                match text.as_str() {
+                                                                    ".0" => t_string!(i18n, voting.no).to_string(),
+                                                                    ".1" => t_string!(i18n, voting.yes).to_string(),
+                                                                    _ => text,
+                                                                }
+                                                            }}
+                                                        </span>
                                                         <span style=format!("color: {}; font-size: 0.875rem; font-weight: bold;", theme.ui_text_secondary)>
                                                             {format!("{} ({}%)", vote_count, percentage)}
                                                         </span>
@@ -243,7 +252,13 @@ pub fn VotingActive(
                                     children=move |result| {
                                         let option_text = options_stored.get_value().iter()
                                             .find(|o| o.id == result.option_id)
-                                            .map(|o| o.text.clone())
+                                            .map(|o| {
+                                                match o.text.as_str() {
+                                                    ".0" => t_string!(i18n, voting.no).to_string(),
+                                                    ".1" => t_string!(i18n, voting.yes).to_string(),
+                                                    _ => o.text.clone(),
+                                                }
+                                            })
                                             .unwrap_or_default();
 
                                         let percentage = if total_voted > 0 {

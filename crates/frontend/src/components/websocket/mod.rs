@@ -385,7 +385,8 @@ fn handle_chat_message(
         &format!("{}: {}", msg.username, msg.payload),
     );
 
-    messages_signal.update(|msgs| msgs.push(msg));
+    // ВАЖНО: Берём обновлённый chat_history из room_state, а не из старого сигнала
+    messages_signal.set(room_state.borrow().chat_history.clone());
 }
 
 fn handle_mouse_event(

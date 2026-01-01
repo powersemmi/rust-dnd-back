@@ -93,6 +93,8 @@ leptos_i18n::declare_locales! {
             completed_status: "✓ Completed",
             voting_not_found: "Voting not found",
             time_remaining: "Time remaining:",
+            yes: "Yes",
+            no: "No",
         },
         conflict: {
             title: "Synchronization Conflict Detected",
@@ -203,6 +205,8 @@ leptos_i18n::declare_locales! {
             completed_status: "✓ Завершено",
             voting_not_found: "Голосование не найдено",
             time_remaining: "Осталось времени:",
+            yes: "Да",
+            no: "Нет",
         },
         conflict: {
             title: "Обнаружен конфликт синхронизации",
@@ -219,6 +223,6 @@ leptos_i18n::declare_locales! {
             force_button: "Принудительно синхронизировать мою версию",
             option_discard: "Отбросить ваши изменения и загрузить удалённое состояние",
             discard_button: "Отбросить мои изменения",
-        },
+        }
     },
 }

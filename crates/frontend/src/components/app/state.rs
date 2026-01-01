@@ -211,7 +211,9 @@ pub fn App() -> impl IntoView {
             if let Some(window) = web_sys::window() {
                 if let Some(document) = window.document() {
                     if let Some(element) = document.get_element_by_id("main-app-container") {
-                        let _ = element.dyn_ref::<web_sys::HtmlElement>().map(|el| el.focus());
+                        let _ = element
+                            .dyn_ref::<web_sys::HtmlElement>()
+                            .map(|el| el.focus());
                     }
                 }
             }
@@ -326,6 +328,49 @@ pub fn App() -> impl IntoView {
                         // Окно разрешения конфликтов
                         <ConflictResolver
                             conflict=conflict_signal
+                            username=username
+                            on_create_voting=move |mut payload| {
+                                payload.creator = username.get();
+                                if let Some(mut sender) = ws_sender.get() {
+                                    // Отправляем presence request чтобы собрать участников
+                                    let request_id = format!("voting_{}", payload.voting_id);
+                                    let presence_req = shared::events::PresenceRequestPayload {
+                                        request_id,
+                                        requester: username.get(),
+                                    };
+                                    let event = shared::events::ClientEvent::PresenceRequest(presence_req);
+                                    if let Ok(json) = serde_json::to_string(&event) {
+                                        let _ = sender.try_send(gloo_net::websocket::Message::Text(json.clone()));
+                                    }
+
+                                    // Отправляем событие начала голосования
+                                    let event = shared::events::ClientEvent::VotingStart(payload);
+                                    if let Ok(json) = serde_json::to_string(&event) {
+                                        let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
+                                    }
+                                }
+                            }
+                            on_submit_vote={
+                                let submit_vote_fn = move |voting_id: String, selected_option_ids: Vec<String>| {
+                                    let voting_id_clone = voting_id.clone();
+                                    let payload = shared::events::VotingCastPayload {
+                                        voting_id,
+                                        user: username.get(),
+                                        selected_option_ids,
+                                    };
+
+                                    if let Some(mut sender) = ws_sender.get() {
+                                        if let Ok(json) = serde_json::to_string(&shared::events::ClientEvent::VotingCast(payload)) {
+                                            let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
+                                        }
+                                    }
+
+                                    voted_in.update(|set| {
+                                        set.insert(voting_id_clone);
+                                    });
+                                };
+                                submit_vote_fn
+                            }
                             theme=theme.get_value()
                         />
 

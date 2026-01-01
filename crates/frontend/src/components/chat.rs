@@ -19,6 +19,44 @@ pub fn ChatWindow(
     let i18n = use_i18n();
     let (input_text, set_input_text) = signal(String::new());
 
+    let input_ref = NodeRef::<leptos::html::Input>::new();
+    let messages_container_ref = NodeRef::<leptos::html::Div>::new();
+
+    // Функция для скролла вниз
+    let scroll_to_bottom = move || {
+        if let Some(container) = messages_container_ref.get() {
+            let _ = container.set_scroll_top(container.scroll_height());
+        }
+    };
+
+    // Проверяем, находится ли скролл внизу
+    let is_scrolled_to_bottom = move || -> bool {
+        if let Some(container) = messages_container_ref.get() {
+            let scroll_top = container.scroll_top();
+            let scroll_height = container.scroll_height();
+            let client_height = container.client_height();
+            // Считаем что мы внизу если осталось меньше 100px до конца
+            (scroll_height - scroll_top - client_height) < 100
+        } else {
+            true
+        }
+    };
+
+    // Эффект для автоскролла при получении новых сообщений
+    Effect::new(move || {
+        let _msgs = messages.get(); // Отслеживаем изменения
+
+        // Небольшая задержка чтобы дать DOM обновиться
+        set_timeout(
+            move || {
+                if is_scrolled_to_bottom() {
+                    scroll_to_bottom();
+                }
+            },
+            std::time::Duration::from_millis(10),
+        );
+    });
+
     let send_message = move || {
         let text = input_text.get();
         if text.is_empty() {
@@ -37,6 +75,19 @@ pub fn ChatWindow(
             }
         }
         set_input_text.set(String::new());
+
+        // Возвращаем фокус на инпут после отправки
+        if let Some(input_el) = input_ref.get() {
+            let _ = input_el.focus();
+        }
+
+        // Скроллим вниз после отправки своего сообщения
+        set_timeout(
+            move || {
+                scroll_to_bottom();
+            },
+            std::time::Duration::from_millis(10),
+        );
     };
 
     view! {
@@ -53,13 +104,9 @@ pub fn ChatWindow(
             on_focus=on_focus.unwrap_or_else(|| Callback::new(|_| {}))
             theme=theme.clone()
         >
-            <div style="flex: 1; overflow-y: auto; padding: 0.9375rem; display: flex; flex-direction: column; gap: 0.625rem;">
-                <For
-                    each=move || messages.get()
-                    key=|msg| (msg.username.clone(), msg.payload.clone())
-                    let:msg
-                >
-                    {
+            <div node_ref=messages_container_ref style="flex: 1; overflow-y: auto; padding: 0.9375rem; display: flex; flex-direction: column; gap: 0.625rem;">
+                {move || {
+                    messages.get().into_iter().map(|msg| {
                         let my_name = username.get_untracked();
                         let is_mine = msg.username == my_name;
                         let bg_color = if is_mine { theme.ui_button_primary } else { theme.ui_bg_secondary };
@@ -70,19 +117,20 @@ pub fn ChatWindow(
                                 bg_color, align
                             )>
                                 <div style=format!("font-size: 0.6875rem; color: {}; margin-bottom: 0.125rem;", theme.ui_text_secondary)>
-                                    {msg.username}
+                                    {msg.username.clone()}
                                 </div>
                                 <div style=format!("color: {};", theme.ui_text_primary)>
-                                    {msg.payload}
+                                    {msg.payload.clone()}
                                 </div>
                             </div>
                         }
-                    }
-                </For>
+                    }).collect_view()
+                }}
             </div>
 
             <div style=format!("padding: 0.9375rem; border-top: 0.0625rem solid {}; display: flex; gap: 0.625rem;", theme.ui_border)>
                 <input
+                    node_ref=input_ref
                     type="text"
                     prop:value=move || input_text.get()
                     on:input=move |ev| set_input_text.set(event_target_value(&ev))

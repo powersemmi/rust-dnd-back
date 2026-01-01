@@ -3,9 +3,16 @@ use crate::config::Theme;
 use crate::i18n::i18n::{t_string, use_i18n};
 use leptos::ev::MouseEvent;
 use leptos::prelude::*;
+use shared::events::voting::{VotingOption, VotingStartPayload, VotingType};
 
 #[component]
-pub fn ConflictResolver(conflict: RwSignal<Option<SyncConflict>>, theme: Theme) -> impl IntoView {
+pub fn ConflictResolver(
+    conflict: RwSignal<Option<SyncConflict>>,
+    username: ReadSignal<String>,
+    on_create_voting: impl Fn(VotingStartPayload) + 'static + Copy + Send + Sync,
+    on_submit_vote: impl Fn(String, Vec<String>) + 'static + Copy + Send + Sync,
+    theme: Theme,
+) -> impl IntoView {
     let i18n = use_i18n();
     let new_room_input = RwSignal::new(String::new());
 
@@ -40,8 +47,34 @@ pub fn ConflictResolver(conflict: RwSignal<Option<SyncConflict>>, theme: Theme) 
     };
 
     let on_force_sync = move |_: MouseEvent| {
-        // Отправляем SyncSnapshot с нашей версией всем пользователям
-        // TODO: реализовать отправку через websocket
+        // Создаём голосование с таймером 60 секунд
+        let voting_id = format!("conflict_vote_{}", js_sys::Date::now() as u64);
+
+        let payload = VotingStartPayload {
+            voting_id: voting_id.clone(),
+            question: t_string!(i18n, conflict.option_force_sync).to_string(),
+            options: vec![
+                VotingOption {
+                    id: ".0".to_string(),
+                    text: ".0".to_string(), // Will be displayed as "No" in UI
+                },
+                VotingOption {
+                    id: ".1".to_string(),
+                    text: ".1".to_string(), // Will be displayed as "Yes" in UI
+                },
+            ],
+            voting_type: VotingType::SingleChoice,
+            is_anonymous: false,
+            timer_seconds: Some(60),
+            default_option_id: Some(".0".to_string()), // Default to "No"
+            creator: username.get(),
+        };
+
+        on_create_voting(payload);
+
+        // Автоматически голосуем "Да" за инициатора
+        on_submit_vote(voting_id, vec![".1".to_string()]);
+
         conflict.set(None);
     };
 
