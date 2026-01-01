@@ -1,12 +1,9 @@
 use crate::config::Theme;
-use crate::i18n::i18n::{t, use_i18n, Locale};
+use crate::i18n::i18n::{Locale, t, use_i18n};
 use leptos::prelude::*;
 
 #[component]
-pub fn Settings(
-    #[prop(into)] is_open: RwSignal<bool>,
-    theme: Theme,
-) -> impl IntoView {
+pub fn Settings(#[prop(into)] is_open: RwSignal<bool>, theme: Theme) -> impl IntoView {
     let i18n = use_i18n();
     let current_locale = i18n.get_locale();
 

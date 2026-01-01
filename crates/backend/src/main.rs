@@ -1,10 +1,12 @@
 use axum::Router;
 use axum::routing::{get, post};
+use axum::http::Method;
 use backend::handlers::{auth, room};
 use backend::{ApiDoc, Config, state};
 use sqlx::postgres::PgPoolOptions;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -37,12 +39,30 @@ async fn main() {
 
     let state = state::AppState::new(redis, pool);
 
+    // Настройка CORS для работы с фронтендом
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([
+            axum::http::header::AUTHORIZATION,
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::ACCEPT,
+        ]);
+
     let router = Router::new()
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .route("/ws/room", get(room::ws_room_handler))
         .route("/api/auth/register", post(auth::register))
         .route("/api/auth/login", post(auth::login))
+        .route("/api/auth/refresh", post(auth::refresh_token))
         .route("/api/auth/me", get(auth::get_me))
+        .layer(cors)
         .with_state(Arc::from(state));
 
     let addr: SocketAddr = SocketAddr::from((config.server_addr.ip(), config.server_addr.port()));

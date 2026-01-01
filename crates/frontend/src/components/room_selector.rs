@@ -1,7 +1,7 @@
 use crate::config::Theme;
+use crate::i18n::i18n::{t, t_string, use_i18n};
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
-use crate::i18n::i18n::{t, t_string, use_i18n};
 
 #[component]
 pub fn RoomSelector(

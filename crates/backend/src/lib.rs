@@ -36,7 +36,8 @@ impl Modify for SecurityAddon {
         docs::websocket_docs,
         handlers::auth::register,
         handlers::auth::login,
-        handlers::auth::get_me
+        handlers::auth::get_me,
+        handlers::auth::refresh_token,
     ),
     components(
         // 3. Регистрируем все структуры, участвующие в документации

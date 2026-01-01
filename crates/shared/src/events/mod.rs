@@ -1,19 +1,21 @@
 pub mod chat;
 pub mod mouse;
 pub mod params;
-pub mod sync;
 pub mod room;
+pub mod sync;
 
 pub use crate::events::chat::ChatMessagePayload;
 pub use crate::events::mouse::MouseClickPayload;
 pub use crate::events::params::Params;
+pub use crate::events::room::RoomState;
+pub use crate::events::sync::{
+    SyncSnapshotPayload, SyncSnapshotRequestPayload, SyncVersionPayload,
+};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "schemas")]
 use utoipa::ToSchema;
 #[cfg(feature = "validation")]
 use validator::Validate;
-pub use crate::events::room::RoomState;
-pub use crate::events::sync::{SyncSnapshotPayload, SyncSnapshotRequestPayload, SyncVersionPayload};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "schemas", derive(ToSchema))]

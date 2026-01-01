@@ -1,5 +1,6 @@
 pub mod app;
 pub mod chat;
+pub mod conflict_resolver;
 pub mod cursor;
 pub mod draggable_window;
 pub mod language_selector;

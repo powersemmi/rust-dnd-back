@@ -1,13 +1,5 @@
-use crate::config;
-use crate::i18n::i18n::{I18nContextProvider, Locale};
-use leptos::prelude::*;
-use shared::events::{
-    mouse::MouseEventTypeEnum, ChatMessagePayload, ClientEvent, MouseClickPayload,
-};
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use wasm_bindgen_futures::spawn_local;
 use super::chat::ChatWindow;
+use super::conflict_resolver::ConflictResolver;
 use super::cursor::Cursor;
 use super::language_selector::LanguageSelector;
 use super::login::LoginForm;
@@ -16,7 +8,17 @@ use super::room_selector::RoomSelector;
 use super::settings::Settings;
 use super::side_menu::SideMenu;
 use super::statistics::{StateEvent, StatisticsWindow};
-use super::websocket::{connect_websocket, CursorSignals, WsSender};
+use super::websocket::{CursorSignals, SyncConflict, WsSender, connect_websocket};
+use crate::config;
+use crate::i18n::i18n::{I18nContextProvider, Locale};
+use crate::utils::token_refresh;
+use leptos::prelude::*;
+use shared::events::{
+    ChatMessagePayload, ClientEvent, MouseClickPayload, mouse::MouseEventTypeEnum,
+};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use wasm_bindgen_futures::spawn_local;
 
 #[derive(Clone, Copy, PartialEq)]
 enum AppState {
@@ -77,6 +79,9 @@ pub fn App() -> impl IntoView {
     // События статистики
     let state_events = RwSignal::new(Vec::<StateEvent>::new());
 
+    // Конфликты синхронизации
+    let conflict_signal = RwSignal::new(Option::<SyncConflict>::None);
+
     // WebSocket sender
     let (ws_sender, set_ws_sender) = signal::<Option<WsSender>>(None);
 
@@ -92,6 +97,8 @@ pub fn App() -> impl IntoView {
             if let Ok(Some(storage)) = window.local_storage() {
                 if let Ok(Some(token)) = storage.get_item("jwt_token") {
                     set_jwt_token.set(token);
+                    // Запускаем автоматическое обновление токена
+                    token_refresh::start_token_refresh(back_url, api_path);
                 }
                 if let Ok(Some(user)) = storage.get_item("username") {
                     set_username.set(user);
@@ -103,6 +110,8 @@ pub fn App() -> impl IntoView {
     // Callbacks для навигации между экранами
     let on_login_success = move |token: String| {
         set_jwt_token.set(token);
+        // Запускаем автоматическое обновление токена после успешного входа
+        token_refresh::start_token_refresh(back_url, api_path);
         if let Some(window) = web_sys::window() {
             if let Ok(Some(storage)) = window.local_storage() {
                 if let Ok(Some(user)) = storage.get_item("username") {
@@ -138,6 +147,7 @@ pub fn App() -> impl IntoView {
             set_cursors,
             messages,
             state_events,
+            conflict_signal,
             cfg.get_value(),
         );
     };
@@ -159,12 +169,15 @@ pub fn App() -> impl IntoView {
             } else {
                 let (rx_x, tx_x) = signal(x);
                 let (rx_y, tx_y) = signal(y);
-                map.insert(user.clone(), CursorSignals {
-                    x: rx_x,
-                    set_x: tx_x,
-                    y: rx_y,
-                    set_y: tx_y,
-                });
+                map.insert(
+                    user.clone(),
+                    CursorSignals {
+                        x: rx_x,
+                        set_x: tx_x,
+                        y: rx_y,
+                        set_y: tx_y,
+                    },
+                );
             }
         });
 
@@ -281,6 +294,12 @@ pub fn App() -> impl IntoView {
                         <StatisticsWindow
                             is_open=is_statistics_open
                             events=state_events
+                            theme=theme.get_value()
+                        />
+
+                        // Окно разрешения конфликтов
+                        <ConflictResolver
+                            conflict=conflict_signal
                             theme=theme.get_value()
                         />
 

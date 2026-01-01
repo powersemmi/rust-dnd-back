@@ -1,8 +1,8 @@
 use crate::config::Theme;
+use crate::i18n::i18n::{t, t_string, use_i18n};
 use gloo_net::http::Request;
 use leptos::ev::SubmitEvent;
 use leptos::prelude::*;
-use crate::i18n::i18n::{t, t_string, use_i18n};
 use shared::auth::{RegisterRequest, RegisterResponse};
 
 #[component]

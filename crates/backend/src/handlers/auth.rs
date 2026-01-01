@@ -170,3 +170,27 @@ pub async fn get_me(auth_user: AuthUser) -> impl IntoResponse {
         "message": "You are authorized!"
     }))
 }
+
+#[utoipa::path(
+    post,
+    path = "/api/auth/refresh",
+    tag = "Auth",
+    security(
+        ("bearer_auth" = [])
+    ),
+    responses(
+        (status = 200, description = "Новый JWT токен", body = LoginResponse),
+        (status = 401, description = "Токен невалиден или истёк")
+    )
+)]
+pub async fn refresh_token(auth_user: AuthUser) -> Result<impl IntoResponse, (StatusCode, String)> {
+    // Создаём новый токен для того же пользователя
+    let new_token = create_jwt(auth_user.user_id, auth_user.username).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Token creation failed: {}", e),
+        )
+    })?;
+
+    Ok(Json(LoginResponse { token: new_token }))
+}

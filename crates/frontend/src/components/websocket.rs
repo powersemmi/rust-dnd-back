@@ -1,21 +1,35 @@
 use crate::components::statistics::StateEvent;
 use crate::config;
 use futures::{SinkExt, StreamExt};
+use gloo_net::websocket::{Message, futures::WebSocket as GlooWebSocket};
 use gloo_timers::future::TimeoutFuture;
 use js_sys;
 use leptos::prelude::*;
-use log::{debug, error};
+use leptos::task::spawn_local;
+use log::{debug, error, warn};
 use rand::seq::IndexedRandom;
 use serde::{Deserialize, Serialize};
 use shared::events::{
-    ChatMessagePayload, ClientEvent, RoomState, SyncSnapshotPayload,
-    SyncSnapshotRequestPayload, SyncVersionPayload,
+    ChatMessagePayload, ClientEvent, RoomState, SyncSnapshotPayload, SyncSnapshotRequestPayload,
+    SyncVersionPayload,
 };
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::cell::RefCell;
-use gloo_net::websocket::{futures::WebSocket as GlooWebSocket, Message};
-use leptos::task::spawn_local;
+
+#[derive(Clone, Debug)]
+pub enum ConflictType {
+    SplitBrain,    // Версии равны, хеши различны
+    Fork,          // Наш хеш не найден в истории удалённого стейта
+    UnsyncedLocal, // Удалённый стейт новее, но у нас есть несинхронизированные изменения
+}
+
+#[derive(Clone, Debug)]
+pub struct SyncConflict {
+    pub conflict_type: ConflictType,
+    pub local_version: u64,
+    pub remote_version: u64,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CursorSignals {
@@ -27,7 +41,6 @@ pub struct CursorSignals {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct LocalStorageData {
-    version: u64,
     state: RoomState,
 }
 
@@ -49,10 +62,9 @@ fn load_state(room_name: &str) -> Option<LocalStorageData> {
     None
 }
 
-fn save_state(room_name: &str, version: u64, state: &RoomState) {
+fn save_state(room_name: &str, state: &RoomState) {
     let key = get_storage_key(room_name);
     let data = LocalStorageData {
-        version,
         state: state.clone(),
     };
     if let Ok(json) = serde_json::to_string(&data) {
@@ -76,6 +88,7 @@ pub fn connect_websocket(
     set_cursors: WriteSignal<HashMap<String, CursorSignals>>,
     messages_signal: RwSignal<Vec<ChatMessagePayload>>,
     state_events: RwSignal<Vec<StateEvent>>,
+    conflict_signal: RwSignal<Option<SyncConflict>>,
     config: config::Config,
 ) {
     // 1. Инициализация состояния (ИСПОЛЬЗУЕМ Rc<RefCell> ВМЕСТО СИГНАЛОВ)
@@ -83,11 +96,13 @@ pub fn connect_websocket(
     // Rc<RefCell> живут пока на них есть ссылки (в замыкании spawn_local).
     let local_version = Rc::new(RefCell::new(0u64));
     let room_state = Rc::new(RefCell::new(RoomState::default()));
+    let last_synced_version = Rc::new(RefCell::new(0u64));
 
     // Пытаемся загрузить из LS
     if let Some(data) = load_state(&room_name) {
-        debug!("Loaded state from LS: v{}", data.version);
-        *local_version.borrow_mut() = data.version;
+        debug!("Loaded state from LS: v{}", data.state.version);
+        *local_version.borrow_mut() = data.state.version;
+        *last_synced_version.borrow_mut() = data.state.version;
         *room_state.borrow_mut() = data.state.clone();
         messages_signal.set(data.state.chat_history);
     }
@@ -102,7 +117,9 @@ pub fn connect_websocket(
         "ws://"
     };
 
-    let host = config.api.back_url
+    let host = config
+        .api
+        .back_url
         .trim_start_matches("http://")
         .trim_start_matches("https://");
 
@@ -154,7 +171,8 @@ pub fn connect_websocket(
 
                     if max_ver > my_ver {
                         debug!("Found newer version {}. Selecting donor...", max_ver);
-                        let best_candidates: Vec<&String> = candidates.iter()
+                        let best_candidates: Vec<&String> = candidates
+                            .iter()
                             .filter(|(u, v)| *v == max_ver && *u != my_username_for_timer)
                             .map(|(u, _)| u)
                             .collect();
@@ -162,9 +180,10 @@ pub fn connect_websocket(
                         let mut rng = rand::rng();
                         if let Some(target) = best_candidates.choose(&mut rng) {
                             debug!("Requesting snapshot from {}", target);
-                            let req = ClientEvent::SyncSnapshotRequest(SyncSnapshotRequestPayload {
-                                target_username: target.to_string(),
-                            });
+                            let req =
+                                ClientEvent::SyncSnapshotRequest(SyncSnapshotRequestPayload {
+                                    target_username: target.to_string(),
+                                });
                             if let Ok(json) = serde_json::to_string(&req) {
                                 let _ = tx_clone_for_timer.clone().try_send(Message::Text(json));
                             }
@@ -181,34 +200,46 @@ pub fn connect_websocket(
                                 match event {
                                     ClientEvent::ChatMessage(msg) => {
                                         debug!("Processing ChatMessage from {}", msg.username);
+
+                                        let is_from_me = msg.username == my_username_clone;
+
                                         // 1. Обновляем локальный стейт
-                                        room_state.borrow_mut().chat_history.push(msg.clone());
+                                        {
+                                            let mut state = room_state.borrow_mut();
+                                            state.chat_history.push(msg.clone());
+                                            state.commit_changes();
+                                        }
 
-                                        // 2. Инкрементим версию
-                                        let mut ver = local_version.borrow_mut();
-                                        *ver += 1;
-                                        let current_ver = *ver;
-                                        drop(ver); // Освобождаем borrow для save_state
+                                        // 2. Получаем текущую версию
+                                        let current_ver = room_state.borrow().version;
+                                        *local_version.borrow_mut() = current_ver;
 
-                                        // 3. Сохраняем
-                                        save_state(
-                                            &room_name_clone,
-                                            current_ver,
-                                            &room_state.borrow()
-                                        );
+                                        // 3. Обновляем last_synced_version только если сообщение пришло из сети
+                                        if !is_from_me {
+                                            *last_synced_version.borrow_mut() = current_ver;
+                                        }
 
-                                        // 4. Логируем событие
-                                        let timestamp = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
+                                        // 4. Сохраняем
+                                        save_state(&room_name_clone, &room_state.borrow());
+
+                                        // 5. Логируем событие
+                                        let timestamp = js_sys::Date::new_0()
+                                            .to_iso_string()
+                                            .as_string()
+                                            .unwrap_or_default();
                                         state_events.update(|events| {
                                             events.push(StateEvent {
                                                 version: current_ver,
                                                 event_type: "CHAT_MESSAGE".to_string(),
-                                                description: format!("{}: {}", msg.username, msg.payload),
+                                                description: format!(
+                                                    "{}: {}",
+                                                    msg.username, msg.payload
+                                                ),
                                                 timestamp,
                                             });
                                         });
 
-                                        // 5. Обновляем UI (messages_signal живет в App, он безопасен)
+                                        // 6. Обновляем UI (messages_signal живет в App, он безопасен)
                                         messages_signal.update(|msgs| msgs.push(msg));
                                     }
 
@@ -217,7 +248,9 @@ pub fn connect_websocket(
                                             continue;
                                         }
                                         set_cursors.update(|cursors| {
-                                            if let Some(cursor_signals) = cursors.get(&mouse_event.user_id) {
+                                            if let Some(cursor_signals) =
+                                                cursors.get(&mouse_event.user_id)
+                                            {
                                                 cursor_signals.set_x.set(mouse_event.x);
                                                 cursor_signals.set_y.set(mouse_event.y);
                                             } else {
@@ -232,24 +265,34 @@ pub fn connect_websocket(
                                     }
 
                                     ClientEvent::SyncRequest => {
-                                        let announce = ClientEvent::SyncVersionAnnounce(SyncVersionPayload {
-                                            username: my_username_clone.clone(),
-                                            version: *local_version.borrow(),
-                                        });
+                                        let current_ver = room_state.borrow().version;
+                                        let announce =
+                                            ClientEvent::SyncVersionAnnounce(SyncVersionPayload {
+                                                username: my_username_clone.clone(),
+                                                version: current_ver,
+                                            });
                                         if let Ok(json) = serde_json::to_string(&announce) {
                                             let _ = tx.clone().try_send(Message::Text(json));
                                         }
                                     }
 
                                     ClientEvent::SyncVersionAnnounce(payload) => {
-                                        sync_candidates.borrow_mut().push((payload.username.clone(), payload.version));
+                                        sync_candidates
+                                            .borrow_mut()
+                                            .push((payload.username.clone(), payload.version));
 
-                                        let timestamp = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
+                                        let timestamp = js_sys::Date::new_0()
+                                            .to_iso_string()
+                                            .as_string()
+                                            .unwrap_or_default();
                                         state_events.update(|events| {
                                             events.push(StateEvent {
                                                 version: *local_version.borrow(),
                                                 event_type: "SYNC_VERSION_ANNOUNCE".to_string(),
-                                                description: format!("{} announced version {}", payload.username, payload.version),
+                                                description: format!(
+                                                    "{} announced version {}",
+                                                    payload.username, payload.version
+                                                ),
                                                 timestamp,
                                             });
                                         });
@@ -258,20 +301,28 @@ pub fn connect_websocket(
                                     ClientEvent::SyncSnapshotRequest(payload) => {
                                         if payload.target_username == my_username_clone {
                                             debug!("Sending snapshot to requester");
-                                            let snapshot = ClientEvent::SyncSnapshot(SyncSnapshotPayload {
-                                                version: *local_version.borrow(),
-                                                state: room_state.borrow().clone(),
-                                            });
+                                            let state = room_state.borrow().clone();
+                                            let snapshot =
+                                                ClientEvent::SyncSnapshot(SyncSnapshotPayload {
+                                                    version: state.version,
+                                                    state: state.clone(),
+                                                });
                                             if let Ok(json) = serde_json::to_string(&snapshot) {
                                                 let _ = tx.clone().try_send(Message::Text(json));
                                             }
 
-                                            let timestamp = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
+                                            let timestamp = js_sys::Date::new_0()
+                                                .to_iso_string()
+                                                .as_string()
+                                                .unwrap_or_default();
                                             state_events.update(|events| {
                                                 events.push(StateEvent {
-                                                    version: *local_version.borrow(),
+                                                    version: state.version,
                                                     event_type: "SYNC_SNAPSHOT_SENT".to_string(),
-                                                    description: format!("Sent snapshot v{} to requester", *local_version.borrow()),
+                                                    description: format!(
+                                                        "Sent snapshot v{} to requester",
+                                                        state.version
+                                                    ),
                                                     timestamp,
                                                 });
                                             });
@@ -279,26 +330,103 @@ pub fn connect_websocket(
                                     }
 
                                     ClientEvent::SyncSnapshot(payload) => {
-                                        let mut ver = local_version.borrow_mut();
-                                        if payload.version > *ver {
-                                            debug!("Applying snapshot v{}", payload.version);
+                                        let local_state = room_state.borrow();
+                                        let local_ver = local_state.version;
+                                        let local_hash = local_state.current_hash.clone();
+                                        let local_synced = *last_synced_version.borrow();
+                                        drop(local_state);
 
-                                            *ver = payload.version;
+                                        let remote_ver = payload.state.version;
+                                        let remote_hash = &payload.state.current_hash;
+
+                                        debug!(
+                                            "Validating snapshot: local v{} (hash: {}), remote v{} (hash: {})",
+                                            local_ver, local_hash, remote_ver, remote_hash
+                                        );
+
+                                        // Проверка на конфликты
+                                        let mut has_conflict = false;
+                                        let mut conflict_type = None;
+
+                                        if remote_ver == local_ver {
+                                            // Сценарий 2: Split Brain
+                                            if remote_hash != &local_hash {
+                                                warn!(
+                                                    "CONFLICT: Split Brain detected! Same version but different hashes."
+                                                );
+                                                has_conflict = true;
+                                                conflict_type = Some(ConflictType::SplitBrain);
+                                            }
+                                        } else if remote_ver > local_ver {
+                                            // Сценарий 1: Fast-Forward
+                                            if !payload
+                                                .state
+                                                .has_version_with_hash(local_ver, &local_hash)
+                                            {
+                                                warn!(
+                                                    "CONFLICT: Fork detected! Our hash not found in remote history."
+                                                );
+                                                has_conflict = true;
+                                                conflict_type = Some(ConflictType::Fork);
+                                            }
+
+                                            // Сценарий 3: Unsynced Local Changes
+                                            if local_ver > local_synced {
+                                                warn!("CONFLICT: Unsynced local changes detected!");
+                                                has_conflict = true;
+                                                conflict_type = Some(ConflictType::UnsyncedLocal);
+                                            }
+                                        }
+
+                                        if has_conflict {
+                                            // Сохраняем конфликт для показа пользователю
+                                            conflict_signal.set(Some(SyncConflict {
+                                                conflict_type: conflict_type.unwrap(),
+                                                local_version: local_ver,
+                                                remote_version: remote_ver,
+                                            }));
+
+                                            let timestamp = js_sys::Date::new_0()
+                                                .to_iso_string()
+                                                .as_string()
+                                                .unwrap_or_default();
+                                            state_events.update(|events| {
+                                                events.push(StateEvent {
+                                                    version: local_ver,
+                                                    event_type: "SYNC_CONFLICT".to_string(),
+                                                    description: format!(
+                                                        "Conflict detected: local v{} vs remote v{}",
+                                                        local_ver, remote_ver
+                                                    ),
+                                                    timestamp,
+                                                });
+                                            });
+                                        } else if remote_ver > local_ver {
+                                            // Валидация пройдена, применяем стейт
+                                            debug!("Applying snapshot v{}", remote_ver);
+
+                                            *local_version.borrow_mut() = remote_ver;
+                                            *last_synced_version.borrow_mut() = remote_ver;
                                             *room_state.borrow_mut() = payload.state.clone();
 
                                             // Обновляем UI
                                             messages_signal.set(payload.state.chat_history.clone());
+                                            save_state(&room_name_clone, &payload.state);
 
-                                            save_state(&room_name_clone, payload.version, &payload.state);
-
-                                            let timestamp = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
-                                            let current_ver = *ver;
-                                            drop(ver);
+                                            let timestamp = js_sys::Date::new_0()
+                                                .to_iso_string()
+                                                .as_string()
+                                                .unwrap_or_default();
                                             state_events.update(|events| {
                                                 events.push(StateEvent {
-                                                    version: current_ver,
-                                                    event_type: "SYNC_SNAPSHOT_RECEIVED".to_string(),
-                                                    description: format!("Applied snapshot v{} ({} messages)", current_ver, payload.state.chat_history.len()),
+                                                    version: remote_ver,
+                                                    event_type: "SYNC_SNAPSHOT_RECEIVED"
+                                                        .to_string(),
+                                                    description: format!(
+                                                        "Applied snapshot v{} ({} messages)",
+                                                        remote_ver,
+                                                        payload.state.chat_history.len()
+                                                    ),
                                                     timestamp,
                                                 });
                                             });

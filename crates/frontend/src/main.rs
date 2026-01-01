@@ -3,6 +3,7 @@ use leptos::prelude::*;
 mod components;
 mod config;
 mod i18n;
+mod utils;
 
 use components::App;
 
