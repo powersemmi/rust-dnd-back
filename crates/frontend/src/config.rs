@@ -12,20 +12,19 @@ pub struct Theme {
     pub mouse_throttle_ms: u64,
     pub background_color: &'static str,
     pub cursor_transition: &'static str,
-    // Auth form colors
-    pub auth_form_bg: &'static str,
-    pub auth_input_bg: &'static str,
-    pub auth_input_border: &'static str,
-    pub auth_input_text: &'static str,
-    pub auth_error_bg: &'static str,
-    pub auth_error_border: &'static str,
-    pub auth_error_text: &'static str,
-    pub auth_success_bg: &'static str,
-    pub auth_success_border: &'static str,
-    pub auth_success_text: &'static str,
-    pub auth_button_login: &'static str,
-    pub auth_button_register: &'static str,
-    pub auth_button_room: &'static str,
+    // Window colors
+    pub window_bg: &'static str,
+    pub window_close_button: &'static str,
+    // Common UI colors (reusable across all components)
+    pub ui_bg_primary: &'static str, // #2a2a2a - main background for cards, inputs
+    pub ui_bg_secondary: &'static str, // #374151 - secondary background
+    pub ui_border: &'static str,     // #444 - borders
+    pub ui_text_primary: &'static str, // white - main text
+    pub ui_text_secondary: &'static str, // #9ca3af - secondary/muted text
+    pub ui_text_muted: &'static str, // #666 - very muted text
+    pub ui_button_primary: &'static str, // #2563eb - primary action buttons
+    pub ui_button_danger: &'static str, // #ef4444 - danger/delete buttons
+    pub ui_success: &'static str,    // #10b981 - success states
 }
 
 #[derive(Clone)]
@@ -82,19 +81,17 @@ impl Default for Theme {
             mouse_throttle_ms: parse_u64(MOUSE_THROTTLE_MS_STR),
             background_color: env!("BACKGROUND_COLOR"),
             cursor_transition: env!("CURSOR_TRANSITION"),
-            auth_form_bg: env!("AUTH_FORM_BG"),
-            auth_input_bg: env!("AUTH_INPUT_BG"),
-            auth_input_border: env!("AUTH_INPUT_BORDER"),
-            auth_input_text: env!("AUTH_INPUT_TEXT"),
-            auth_error_bg: env!("AUTH_ERROR_BG"),
-            auth_error_border: env!("AUTH_ERROR_BORDER"),
-            auth_error_text: env!("AUTH_ERROR_TEXT"),
-            auth_success_bg: env!("AUTH_SUCCESS_BG"),
-            auth_success_border: env!("AUTH_SUCCESS_BORDER"),
-            auth_success_text: env!("AUTH_SUCCESS_TEXT"),
-            auth_button_login: env!("AUTH_BUTTON_LOGIN"),
-            auth_button_register: env!("AUTH_BUTTON_REGISTER"),
-            auth_button_room: env!("AUTH_BUTTON_ROOM"),
+            window_bg: env!("WINDOW_BG"),
+            window_close_button: env!("WINDOW_CLOSE_BUTTON"),
+            ui_bg_primary: env!("UI_BG_PRIMARY"),
+            ui_bg_secondary: env!("UI_BG_SECONDARY"),
+            ui_border: env!("UI_BORDER"),
+            ui_text_primary: env!("UI_TEXT_PRIMARY"),
+            ui_text_secondary: env!("UI_TEXT_SECONDARY"),
+            ui_text_muted: env!("UI_TEXT_MUTED"),
+            ui_button_primary: env!("UI_BUTTON_PRIMARY"),
+            ui_button_danger: env!("UI_BUTTON_DANGER"),
+            ui_success: env!("UI_SUCCESS"),
         }
     }
 }

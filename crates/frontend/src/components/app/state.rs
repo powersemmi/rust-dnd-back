@@ -63,8 +63,18 @@ pub fn App() -> impl IntoView {
     // События статистики
     let state_events = RwSignal::new(Vec::<StateEvent>::new());
 
+    // Результаты голосований
+    let voting_results =
+        RwSignal::new(HashMap::<String, shared::events::voting::VotingResultPayload>::new());
+
     // Конфликты синхронизации
     let conflict_signal = RwSignal::new(Option::<SyncConflict>::None);
+
+    // Голосования (множественные)
+    let votings = RwSignal::new(HashMap::<String, super::super::voting::VotingState>::new());
+
+    // Голосования, в которых пользователь проголосовал
+    let voted_in = RwSignal::new(std::collections::HashSet::<String>::new());
 
     // WebSocket sender
     let (ws_sender, set_ws_sender) = signal::<Option<WsSender>>(None);
@@ -74,6 +84,7 @@ pub fn App() -> impl IntoView {
     let is_chat_open = RwSignal::new(false);
     let is_settings_open = RwSignal::new(false);
     let is_statistics_open = RwSignal::new(false);
+    let is_voting_open = RwSignal::new(false);
 
     // Загружаем токен и username из localStorage если есть
     if initial_state == AppState::RoomSelection {
@@ -114,6 +125,8 @@ pub fn App() -> impl IntoView {
         messages,
         state_events,
         conflict_signal,
+        votings,
+        voting_results,
         cfg,
     ));
 
@@ -172,6 +185,7 @@ pub fn App() -> impl IntoView {
                             on_chat_open=Callback::new(move |_| is_chat_open.set(true))
                             on_settings_open=Callback::new(move |_| is_settings_open.set(true))
                             on_statistics_open=Callback::new(move |_| is_statistics_open.set(true))
+                            on_voting_open=Callback::new(move |_| is_voting_open.set(true))
                             theme=theme.get_value()
                         />
 
@@ -194,12 +208,32 @@ pub fn App() -> impl IntoView {
                         <StatisticsWindow
                             is_open=is_statistics_open
                             events=state_events
+                            voting_results=voting_results
                             theme=theme.get_value()
                         />
 
                         // Окно разрешения конфликтов
                         <ConflictResolver
                             conflict=conflict_signal
+                            theme=theme.get_value()
+                        />
+
+                        // Окно голосований
+                        <super::super::voting::VotingWindow
+                            show_voting_window=is_voting_open
+                            votings=votings
+                            voted_in=voted_in
+                            username=username
+                            ws_sender=ws_sender
+                            on_create_voting=move |mut payload| {
+                                payload.creator = username.get();
+                                if let Some(mut sender) = ws_sender.get() {
+                                    let event = shared::events::ClientEvent::VotingStart(payload);
+                                    if let Ok(json) = serde_json::to_string(&event) {
+                                        let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
+                                    }
+                                }
+                            }
                             theme=theme.get_value()
                         />
 

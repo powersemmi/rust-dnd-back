@@ -38,41 +38,32 @@ pub fn RoomSelector(
         on_room_selected.run(room_val);
     };
 
-    let form_bg = theme.auth_form_bg;
-    let input_bg = theme.auth_input_bg;
-    let input_border = theme.auth_input_border;
-    let input_text = theme.auth_input_text;
-    let error_bg = theme.auth_error_bg;
-    let error_border = theme.auth_error_border;
-    let error_text = theme.auth_error_text;
-    let button_color = theme.auth_button_room;
-
     view! {
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 20px;">
-            <div style=format!("background: {}; padding: 40px; border-radius: 10px; max-width: 400px; width: 100%;", form_bg)>
-                <h1 style="color: white; text-align: center; margin-bottom: 30px;">{t!(i18n, auth.room.title)}</h1>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 1.25rem;">
+            <div style=format!("background: {}; padding: 2.5rem; border-radius: 0.625rem; max-width: 25rem; width: 100%;", theme.ui_bg_primary)>
+                <h1 style=format!("color: {}; text-align: center; margin-bottom: 1.875rem;", theme.ui_text_primary)>{t!(i18n, auth.room.title)}</h1>
 
-                <form on:submit=on_submit style="display: flex; flex-direction: column; gap: 20px;">
-                    <div style="display: flex; flex-direction: column; gap: 8px;">
-                        <label style="color: #ccc;">{t!(i18n, auth.room.room_id)}</label>
+                <form on:submit=on_submit style="display: flex; flex-direction: column; gap: 1.25rem;">
+                    <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                        <label style=format!("color: {};", theme.ui_text_primary)>{t!(i18n, auth.room.room_id)}</label>
                         <input
                             type="text"
                             value=move || room_id.get()
                             on:input=move |ev| set_room_id.set(event_target_value(&ev))
                             placeholder=move || t_string!(i18n, auth.room.room_id).to_string()
-                            style=format!("padding: 12px; border-radius: 5px; border: 1px solid {}; background: {}; color: {}; font-size: 16px;", input_border, input_bg, input_text)
+                            style=format!("padding: 0.75rem; border-radius: 0.3125rem; border: 0.0625rem solid {}; background: {}; color: {}; font-size: 1rem;", theme.ui_border, theme.ui_bg_secondary, theme.ui_text_primary)
                         />
                     </div>
 
                     <Show when=move || error_message.get().is_some()>
-                        <div style=format!("padding: 12px; background: {}; border: 1px solid {}; border-radius: 5px; color: {};", error_bg, error_border, error_text)>
+                        <div style=format!("padding: 0.75rem; background: {}; border: 0.0625rem solid {}; border-radius: 0.3125rem; color: {};", theme.ui_bg_secondary, theme.ui_button_danger, theme.ui_button_danger)>
                             {move || error_message.get().unwrap_or_default()}
                         </div>
                     </Show>
 
                     <button
                         type="submit"
-                        style=format!("padding: 12px; background: {}; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; font-weight: bold;", button_color)
+                        style=format!("padding: 0.75rem; background: {}; color: {}; border: none; border-radius: 0.3125rem; font-size: 1rem; cursor: pointer; font-weight: bold;", theme.ui_button_primary, theme.ui_text_primary)
                     >
                         {t!(i18n, auth.room.button)}
                     </button>

@@ -49,12 +49,24 @@ async fn handle_events(
             match event {
                 ClientEvent::Ping => (Some("{\"type\": \"PONG\"}".into()), EventType::Text),
                 _ => {
+                    // Публикуем сообщение в канал
                     let _: () = redis::cmd("PUBLISH")
                         .arg(&channel_name)
-                        .arg(text.to_string()) // Отправляем проверенный JSON всем остальным
+                        .arg(text.to_string())
                         .query_async(&mut redis_connect)
                         .await
                         .unwrap();
+
+                    // Устанавливаем TTL 24 часа для activity ключа канала
+                    let activity_key = format!("{}:activity", channel_name);
+                    let _: () = redis::cmd("SETEX")
+                        .arg(&activity_key)
+                        .arg(86400) // 24 часа в секундах
+                        .arg("1")
+                        .query_async(&mut redis_connect)
+                        .await
+                        .unwrap();
+
                     (None, EventType::Redis)
                 }
             }
@@ -67,6 +79,33 @@ async fn handle_socket(socket: WebSocket, room_id: String, user_id: Uuid, state:
     let channel_name = format!("room:{}", room_id);
     let (mut sender, mut receiver) = socket.split();
     let (tx, mut rx) = mpsc::channel::<Message>(100);
+
+    // Проверяем активность комнаты перед подключением
+    let mut redis_connect = state
+        .get_redis()
+        .get_multiplexed_async_connection()
+        .await
+        .expect("Failed to get redis connection");
+
+    let activity_key = format!("{}:activity", channel_name);
+    let exists: bool = redis::cmd("EXISTS")
+        .arg(&activity_key)
+        .query_async(&mut redis_connect)
+        .await
+        .unwrap_or(false);
+
+    // Если комната неактивна более 24 часов, устанавливаем новый TTL
+    if !exists {
+        debug!("Room {} was inactive, resetting activity", room_id);
+        let _: () = redis::cmd("SETEX")
+            .arg(&activity_key)
+            .arg(86400)
+            .arg("1")
+            .query_async(&mut redis_connect)
+            .await
+            .unwrap();
+    }
+
     let mut pubsub = state
         .get_redis()
         .get_async_pubsub()

@@ -32,13 +32,13 @@ pub fn LanguageSelector(initial_locale: Locale, theme: Theme) -> impl IntoView {
     };
 
     let button_style = format!(
-        "background: {}; color: #fff; padding: 8px 16px; border: none; \
-         border-radius: 4px; cursor: pointer; font-size: 14px;",
-        theme.auth_button_room
+        "background: {}; color: {}; padding: 0.5rem 1rem; border: none; \
+         border-radius: 0.25rem; cursor: pointer; font-size: 0.875rem;",
+        theme.ui_button_primary, theme.ui_text_primary
     );
 
     view! {
-        <div style="position: fixed; top: 20px; right: 20px; z-index: 1000;">
+        <div style="position: fixed; top: 1.25rem; right: 1.25rem; z-index: 1000;">
             <select
                 on:change=on_change
                 style=button_style

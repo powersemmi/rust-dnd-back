@@ -12,8 +12,28 @@ pub fn ConflictResolver(conflict: RwSignal<Option<SyncConflict>>, theme: Theme) 
     let on_move_to_new_room = move |_: MouseEvent| {
         let new_room = new_room_input.get();
         if !new_room.is_empty() {
-            // Перенаправляем пользователя в новую комнату
+            // Сохраняем текущий стейт в localStorage для новой комнаты
             if let Some(window) = web_sys::window() {
+                if let Ok(Some(storage)) = window.local_storage() {
+                    // Получаем текущую комнату из URL
+                    if let Some(location) = window.location().search().ok() {
+                        if let Some(old_room) = location
+                            .split("room=")
+                            .nth(1)
+                            .map(|s| s.split('&').next().unwrap_or(""))
+                        {
+                            // Копируем стейт из старой комнаты в новую
+                            if let Ok(Some(old_state_json)) =
+                                storage.get_item(&format!("room_state:{}", old_room))
+                            {
+                                let _ = storage
+                                    .set_item(&format!("room_state:{}", new_room), &old_state_json);
+                            }
+                        }
+                    }
+                }
+
+                // Перенаправляем пользователя в новую комнату
                 let _ = window.location().set_href(&format!("/?room={}", new_room));
             }
         }
@@ -34,21 +54,19 @@ pub fn ConflictResolver(conflict: RwSignal<Option<SyncConflict>>, theme: Theme) 
 
     view! {
         <Show when=move || conflict.get().is_some()>
-            <div style=format!(
-                "position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; \
+            <div style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; \
                 background: rgba(0,0,0,0.8); z-index: 10000; \
-                display: flex; align-items: center; justify-content: center;"
-            )>
+                display: flex; align-items: center; justify-content: center;".to_string()>
                 <div style=format!(
-                    "background: {}; color: {}; padding: 30px; border-radius: 12px; \
-                    max-width: 600px; width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.5);",
-                    theme.auth_form_bg, theme.auth_input_text
+                    "background: {}; color: {}; padding: 1.875rem; border-radius: 0.75rem; \
+                    max-width: 37.5rem; width: 90%; box-shadow: 0 0.25rem 1.25rem rgba(0,0,0,0.5);",
+                    theme.ui_bg_primary, theme.ui_text_primary
                 )>
-                    <h2 style="margin-top: 0; color: #ff6b6b;">
+                    <h2 style=format!("margin-top: 0; color: {};", theme.ui_button_danger)>
                         {move || t_string!(i18n, conflict.title)}
                     </h2>
 
-                    <p style="margin: 20px 0;">
+                    <p style="margin: 1.25rem 0;">
                         {move || {
                             conflict.get().as_ref().map(|c| {
                                 match c.conflict_type {
@@ -69,11 +87,11 @@ pub fn ConflictResolver(conflict: RwSignal<Option<SyncConflict>>, theme: Theme) 
                         {move || conflict.get().as_ref().map(|c| format!(": v{}", c.remote_version)).unwrap_or_default()}
                     </p>
 
-                    <hr style="border-color: #444; margin: 20px 0;" />
+                    <hr style=format!("border-color: {}; margin: 1.25rem 0;", theme.ui_border) />
 
                     <h3>{move || t_string!(i18n, conflict.options_title)}</h3>
 
-                    <p style="margin-top: 15px;">
+                    <p style="margin-top: 0.9375rem;">
                         <strong>"1. "</strong>
                         {move || t_string!(i18n, conflict.option_move_room)}
                     </p>
@@ -81,10 +99,10 @@ pub fn ConflictResolver(conflict: RwSignal<Option<SyncConflict>>, theme: Theme) 
                         type="text"
                         placeholder={move || t_string!(i18n, conflict.new_room_placeholder)}
                         style=format!(
-                            "width: calc(100% - 20px); padding: 10px; \
-                            background: {}; color: {}; border: 1px solid #555; \
-                            border-radius: 6px; margin: 10px 0;",
-                            theme.auth_input_bg, theme.auth_input_text
+                            "width: calc(100% - 1.25rem); padding: 0.625rem; \
+                            background: {}; color: {}; border: 0.0625rem solid {}; \
+                            border-radius: 0.375rem; margin: 0.625rem 0;",
+                            theme.ui_bg_secondary, theme.ui_text_primary, theme.ui_border
                         )
                         on:input=move |ev| {
                             new_room_input.set(event_target_value(&ev));
@@ -93,37 +111,43 @@ pub fn ConflictResolver(conflict: RwSignal<Option<SyncConflict>>, theme: Theme) 
                     />
                     <button
                         style=format!(
-                            "padding: 10px 20px; background: {}; color: white; \
-                            border: none; border-radius: 6px; cursor: pointer; \
-                            font-size: 14px; margin-bottom: 15px;",
-                            theme.auth_button_room
+                            "padding: 0.625rem 1.25rem; background: {}; color: {}; \
+                            border: none; border-radius: 0.375rem; cursor: pointer; \
+                            font-size: 0.875rem; margin-bottom: 0.9375rem;",
+                            theme.ui_button_primary, theme.ui_text_primary
                         )
                         on:click=on_move_to_new_room
                     >
                         {move || t_string!(i18n, conflict.move_button)}
                     </button>
 
-                    <p style="margin-top: 15px;">
+                    <p style="margin-top: 0.9375rem;">
                         <strong>"2. "</strong>
                         {move || t_string!(i18n, conflict.option_force_sync)}
                     </p>
                     <button
-                        style="padding: 10px 20px; background: #ff9800; color: white; \
-                            border: none; border-radius: 6px; cursor: pointer; \
-                            font-size: 14px; margin-bottom: 15px;"
+                        style=format!(
+                            "padding: 0.625rem 1.25rem; background: #ff9800; color: {}; \
+                            border: none; border-radius: 0.375rem; cursor: pointer; \
+                            font-size: 0.875rem; margin-bottom: 0.9375rem;",
+                            theme.ui_text_primary
+                        )
                         on:click=on_force_sync
                     >
                         {move || t_string!(i18n, conflict.force_button)}
                     </button>
 
-                    <p style="margin-top: 15px;">
+                    <p style="margin-top: 0.9375rem;">
                         <strong>"3. "</strong>
                         {move || t_string!(i18n, conflict.option_discard)}
                     </p>
                     <button
-                        style="padding: 10px 20px; background: #f44336; color: white; \
-                            border: none; border-radius: 6px; cursor: pointer; \
-                            font-size: 14px;"
+                        style=format!(
+                            "padding: 0.625rem 1.25rem; background: {}; color: {}; \
+                            border: none; border-radius: 0.375rem; cursor: pointer; \
+                            font-size: 0.875rem;",
+                            theme.ui_button_danger, theme.ui_text_primary
+                        )
                         on:click=on_discard
                     >
                         {move || t_string!(i18n, conflict.discard_button)}

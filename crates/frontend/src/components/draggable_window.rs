@@ -15,8 +15,8 @@ pub fn DraggableWindow(
     theme: Theme,
     children: Children,
 ) -> impl IntoView {
-    let form_bg = theme.auth_form_bg;
-    let button_color = theme.auth_button_room;
+    let window_bg = theme.window_bg;
+    let close_button_color = theme.window_close_button;
 
     let (pos_x, set_pos_x) = signal(initial_x);
     let (pos_y, set_pos_y) = signal(initial_y);
@@ -78,37 +78,32 @@ pub fn DraggableWindow(
             on:mousemove=on_global_mouse_move
             on:mouseup=on_global_mouse_up
             style=move || format!(
-                "position: fixed; left: {}px; top: {}px; width: {}px; height: {}px; background: {}; border: 1px solid #444; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); z-index: 1001; display: {}; flex-direction: column; overflow: hidden;",
+                "position: fixed; left: {}px; top: {}px; width: {}px; height: {}px; background: {}; border: 0.0625rem solid {}; border-radius: 0.5rem; box-shadow: 0 0.25rem 1.25rem rgba(0,0,0,0.5); z-index: 1001; display: {}; flex-direction: column; overflow: hidden;",
                 pos_x.get(),
                 pos_y.get(),
                 width.get(),
                 height.get(),
-                form_bg,
+                window_bg,
+                theme.ui_border,
                 display()
             )
         >
                 // Header
                 <div
                     on:mousedown=on_header_mouse_down
-                    style="
-                        padding: 12px 15px;
-                        background: #2a2a2a;
-                        border-bottom: 1px solid #444;
-                        cursor: move;
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                        user-select: none;
-                    "
+                    style=format!(
+                        "padding: 0.75rem 0.9375rem; background: {}; border-bottom: 0.0625rem solid {}; cursor: move; display: flex; justify-content: space-between; align-items: center; user-select: none;",
+                        theme.ui_bg_primary, theme.ui_border
+                    )
                 >
-                    <h3 style="margin: 0; color: white; font-size: 16px;">
+                    <h3 style=format!("margin: 0; color: {}; font-size: 1rem;", theme.ui_text_primary)>
                         {move || title.get()}
                     </h3>
                     <button
                         on:click=move |_| is_open.set(false)
                         style=format!(
-                            "background: {}; border: none; color: white; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;",
-                            button_color
+                            "background: {}; border: none; color: {}; padding: 0.25rem 0.625rem; border-radius: 0.25rem; cursor: pointer; font-size: 1.125rem; font-weight: bold; line-height: 1;",
+                            close_button_color, theme.ui_text_primary
                         )
                     >
                         "×"
@@ -122,15 +117,10 @@ pub fn DraggableWindow(
                 // Resize handle
                 <div
                     on:mousedown=on_resize_mouse_down
-                    style="
-                        position: absolute;
-                        bottom: 0;
-                        right: 0;
-                        width: 20px;
-                        height: 20px;
-                        cursor: nwse-resize;
-                        background: linear-gradient(135deg, transparent 50%, #666 50%);
-                    "
+                    style=format!(
+                        "position: absolute; bottom: 0; right: 0; width: 1.25rem; height: 1.25rem; cursor: nwse-resize; background: linear-gradient(135deg, transparent 50%, {} 50%);",
+                        theme.ui_text_muted
+                    )
                 />
             </div>
     }

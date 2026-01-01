@@ -47,9 +47,9 @@ pub fn ChatWindow(
             initial_height=500
             min_width=300
             min_height=200
-            theme=theme
+            theme=theme.clone()
         >
-            <div style="flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px;">
+            <div style="flex: 1; overflow-y: auto; padding: 0.9375rem; display: flex; flex-direction: column; gap: 0.625rem;">
                 <For
                     each=move || messages.get()
                     key=|msg| (msg.username.clone(), msg.payload.clone())
@@ -58,17 +58,17 @@ pub fn ChatWindow(
                     {
                         let my_name = username.get_untracked();
                         let is_mine = msg.username == my_name;
-                        let bg_color = if is_mine { "#2563eb" } else { "#374151" };
+                        let bg_color = if is_mine { theme.ui_button_primary } else { theme.ui_bg_secondary };
                         let align = if is_mine { "flex-end" } else { "flex-start" };
                         view! {
                             <div style=format!(
-                                "padding: 8px 12px; background: {}; border-radius: 8px; align-self: {}; max-width: 70%; word-wrap: break-word;",
+                                "padding: 0.5rem 0.75rem; background: {}; border-radius: 0.5rem; align-self: {}; max-width: 70%; word-wrap: break-word;",
                                 bg_color, align
                             )>
-                                <div style="font-size: 11px; color: #9ca3af; margin-bottom: 2px;">
+                                <div style=format!("font-size: 0.6875rem; color: {}; margin-bottom: 0.125rem;", theme.ui_text_secondary)>
                                     {msg.username}
                                 </div>
-                                <div style="color: white;">
+                                <div style=format!("color: {};", theme.ui_text_primary)>
                                     {msg.payload}
                                 </div>
                             </div>
@@ -77,7 +77,7 @@ pub fn ChatWindow(
                 </For>
             </div>
 
-            <div style="padding: 15px; border-top: 1px solid #444; display: flex; gap: 10px;">
+            <div style=format!("padding: 0.9375rem; border-top: 0.0625rem solid {}; display: flex; gap: 0.625rem;", theme.ui_border)>
                 <input
                     type="text"
                     prop:value=move || input_text.get()
@@ -88,11 +88,11 @@ pub fn ChatWindow(
                         }
                     }
                     placeholder=move || t_string!(i18n, chat.placeholder)
-                    style="flex: 1; padding: 8px 12px; background: #2a2a2a; border: 1px solid #444; border-radius: 5px; color: white; outline: none;"
+                    style=format!("flex: 1; padding: 0.5rem 0.75rem; background: {}; border: 0.0625rem solid {}; border-radius: 0.3125rem; color: {}; outline: none;", theme.ui_bg_primary, theme.ui_border, theme.ui_text_primary)
                 />
                 <button
                     on:click=move |_| send_message()
-                    style="padding: 8px 16px; background: #2563eb; color: white; border: none; border-radius: 5px; cursor: pointer;"
+                    style=format!("padding: 0.5rem 1rem; background: {}; color: {}; border: none; border-radius: 0.3125rem; cursor: pointer;", theme.ui_button_primary, theme.ui_text_primary)
                 >
                     {move || t!(i18n, chat.send)}
                 </button>

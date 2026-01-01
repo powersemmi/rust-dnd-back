@@ -31,7 +31,7 @@ pub fn Cursor(
                 <path d="M7 2l12 11.2-5.8.5 3.3 7.3-2.2.9-3.2-7.4-4.4 4z"/>
             </svg>
             // Никнейм
-            <span style="background: rgba(0,0,0,0.7); color: white; padding: 2px 5px; border-radius: 4px; font-size: 12px;">
+            <span style="background: rgba(0,0,0,0.7); color: white; padding: 0.125rem 0.3125rem; border-radius: 0.25rem; font-size: 0.75rem;">
                 {username}
             </span>
         </div>

@@ -1,6 +1,8 @@
 use crate::events::chat::ChatMessagePayload;
+use crate::events::voting::VotingResultPayload;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 #[cfg(feature = "schemas")]
 use utoipa::ToSchema;
 #[cfg(feature = "validation")]
@@ -15,6 +17,11 @@ pub struct RoomState {
     #[cfg_attr(feature = "validation", validate(length(min = 0)))]
     // Просто проверяем, что это список
     pub chat_history: Vec<ChatMessagePayload>,
+
+    /// Результаты завершенных голосований (voting_id -> результаты)
+    #[serde(default)]
+    pub voting_results: HashMap<String, VotingResultPayload>,
+
     // В будущем сюда добавим:
     // pub tokens: Vec<TokenState>,
     // pub scene: String,
@@ -33,6 +40,7 @@ impl Default for RoomState {
     fn default() -> Self {
         let mut state = Self {
             chat_history: Vec::new(),
+            voting_results: HashMap::new(),
             version: 0,
             current_hash: String::new(),
             history_log: Vec::new(),
@@ -51,6 +59,11 @@ impl RoomState {
         // Хешируем полезную нагрузку
         if let Ok(chat_json) = serde_json::to_string(&self.chat_history) {
             hasher.update(chat_json.as_bytes());
+        }
+
+        // Хешируем результаты голосований
+        if let Ok(voting_json) = serde_json::to_string(&self.voting_results) {
+            hasher.update(voting_json.as_bytes());
         }
 
         // Добавляем ссылку на предыдущий хеш (как цепочку блоков)

@@ -5,6 +5,7 @@ mod types;
 pub use types::{ConflictType, CursorSignals, SyncConflict};
 
 use crate::components::statistics::StateEvent;
+use crate::components::voting::VotingState;
 use crate::config;
 use futures::{SinkExt, StreamExt};
 use gloo_net::websocket::{Message, futures::WebSocket as GlooWebSocket};
@@ -15,8 +16,9 @@ use leptos::task::spawn_local;
 use log::{debug, error};
 use rand::seq::IndexedRandom;
 use shared::events::{
-    ChatMessagePayload, ClientEvent, RoomState, SyncSnapshotPayload, SyncSnapshotRequestPayload,
-    SyncVersionPayload,
+    ChatMessagePayload, ClientEvent, PresenceRequestPayload, PresenceResponsePayload, RoomState,
+    SyncSnapshotPayload, SyncSnapshotRequestPayload, SyncVersionPayload, VotingEndPayload,
+    voting::{VotingResultPayload, VotingStartPayload},
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -33,6 +35,8 @@ pub fn connect_websocket(
     messages_signal: RwSignal<Vec<ChatMessagePayload>>,
     state_events: RwSignal<Vec<StateEvent>>,
     conflict_signal: RwSignal<Option<SyncConflict>>,
+    votings: RwSignal<HashMap<String, VotingState>>,
+    voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
     config: config::Config,
 ) {
     // Инициализация состояния
@@ -46,7 +50,8 @@ pub fn connect_websocket(
         *local_version.borrow_mut() = data.state.version;
         *last_synced_version.borrow_mut() = data.state.version;
         *room_state.borrow_mut() = data.state.clone();
-        messages_signal.set(data.state.chat_history);
+        messages_signal.set(data.state.chat_history.clone());
+        voting_results.set(data.state.voting_results);
     }
 
     let room_name_clone = room_name.clone();
@@ -95,6 +100,8 @@ pub fn connect_websocket(
                     messages_signal,
                     state_events,
                     conflict_signal,
+                    votings,
+                    voting_results,
                 )
                 .await;
             }
@@ -184,6 +191,8 @@ async fn process_messages(
     messages_signal: RwSignal<Vec<ChatMessagePayload>>,
     state_events: RwSignal<Vec<StateEvent>>,
     conflict_signal: RwSignal<Option<SyncConflict>>,
+    votings: RwSignal<HashMap<String, VotingState>>,
+    voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
 ) {
     while let Some(msg) = read.next().await {
         match msg {
@@ -203,6 +212,8 @@ async fn process_messages(
                         messages_signal,
                         state_events,
                         conflict_signal,
+                        votings,
+                        voting_results,
                     );
                 } else {
                     error!("Failed to parse event: {}", text);
@@ -228,6 +239,8 @@ fn handle_event(
     messages_signal: RwSignal<Vec<ChatMessagePayload>>,
     state_events: RwSignal<Vec<StateEvent>>,
     conflict_signal: RwSignal<Option<SyncConflict>>,
+    votings: RwSignal<HashMap<String, VotingState>>,
+    voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
 ) {
     match event {
         ClientEvent::ChatMessage(msg) => handle_chat_message(
@@ -264,7 +277,30 @@ fn handle_event(
             messages_signal,
             state_events,
             conflict_signal,
+            voting_results,
         ),
+        ClientEvent::VotingStart(payload) => handle_voting_start(payload, votings),
+        ClientEvent::VotingCast(payload) => {
+            debug!("Received VotingCast: {:?}", payload);
+        }
+        ClientEvent::VotingResult(payload) => handle_voting_result(
+            payload,
+            votings,
+            voting_results,
+            room_state,
+            local_version,
+            last_synced_version,
+            room_name,
+            state_events,
+        ),
+        ClientEvent::VotingEnd(payload) => handle_voting_end(payload, votings),
+        ClientEvent::PresenceRequest(payload) => handle_presence_request(payload, tx, my_username),
+        ClientEvent::PresenceResponse(payload) => {
+            debug!("Received PresenceResponse: {:?}", payload);
+        }
+        ClientEvent::PresenceAnnounce(payload) => {
+            debug!("Received PresenceAnnounce: {:?}", payload);
+        }
         _ => {}
     }
 }
@@ -283,11 +319,14 @@ fn handle_chat_message(
 
     let is_from_me = msg.username == my_username;
 
-    let mut state = room_state.borrow_mut();
-    state.chat_history.push(msg.clone());
-    state.commit_changes();
+    // Обновляем state и получаем новую версию
+    let current_ver = {
+        let mut state = room_state.borrow_mut();
+        state.chat_history.push(msg.clone());
+        state.commit_changes();
+        state.version
+    };
 
-    let current_ver = room_state.borrow().version;
     *local_version.borrow_mut() = current_ver;
 
     // Обновляем last_synced_version только если сообщение пришло из сети
@@ -398,6 +437,7 @@ fn handle_snapshot(
     messages_signal: RwSignal<Vec<ChatMessagePayload>>,
     state_events: RwSignal<Vec<StateEvent>>,
     conflict_signal: RwSignal<Option<SyncConflict>>,
+    voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
 ) {
     let local_state = room_state.borrow();
     let local_ver = local_state.version;
@@ -443,6 +483,7 @@ fn handle_snapshot(
             *room_state.borrow_mut() = payload.state.clone();
 
             messages_signal.set(payload.state.chat_history.clone());
+            voting_results.set(payload.state.voting_results.clone());
             storage::save_state(room_name, &payload.state);
 
             log_event(
@@ -478,4 +519,91 @@ fn log_event(
             timestamp,
         });
     });
+}
+
+// Voting event handlers
+
+fn handle_voting_start(
+    payload: VotingStartPayload,
+    votings: RwSignal<HashMap<String, VotingState>>,
+) {
+    debug!("Voting started: {}", payload.question);
+    let voting_id = payload.voting_id.clone();
+    votings.update(|map| {
+        map.insert(voting_id, VotingState::Active(payload));
+    });
+}
+
+fn handle_voting_result(
+    payload: VotingResultPayload,
+    votings: RwSignal<HashMap<String, VotingState>>,
+    voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
+    room_state: &Rc<RefCell<RoomState>>,
+    local_version: &Rc<RefCell<u64>>,
+    last_synced_version: &Rc<RefCell<u64>>,
+    room_name: &str,
+    state_events: RwSignal<Vec<StateEvent>>,
+) {
+    debug!("Voting results received for: {}", payload.voting_id);
+
+    // Обновляем текущее состояние голосования
+    votings.update(|map| {
+        if let Some(VotingState::Active(voting)) = map.get(&payload.voting_id) {
+            let voting_clone = voting.clone();
+            map.insert(
+                payload.voting_id.clone(),
+                VotingState::Results {
+                    voting: voting_clone,
+                    results: payload.results.clone(),
+                    total_participants: payload.total_participants,
+                    total_voted: payload.total_voted,
+                },
+            );
+        }
+    });
+
+    // Сохраняем результаты в статистику
+    voting_results.update(|results| {
+        results.insert(payload.voting_id.clone(), payload.clone());
+    });
+
+    // Сохраняем результаты в RoomState
+    let current_ver = {
+        let mut state = room_state.borrow_mut();
+        state
+            .voting_results
+            .insert(payload.voting_id.clone(), payload.clone());
+        state.commit_changes();
+        state.version
+    };
+
+    *local_version.borrow_mut() = current_ver;
+    *last_synced_version.borrow_mut() = current_ver;
+
+    storage::save_state(room_name, &room_state.borrow());
+
+    log_event(
+        state_events,
+        current_ver,
+        "VOTING_RESULT",
+        &format!("Voting {} completed", payload.voting_id),
+    );
+}
+
+fn handle_voting_end(payload: VotingEndPayload, votings: RwSignal<HashMap<String, VotingState>>) {
+    debug!("Voting ended: {}", payload.voting_id);
+    votings.update(|map| {
+        map.remove(&payload.voting_id);
+    });
+}
+
+fn handle_presence_request(payload: PresenceRequestPayload, tx: &WsSender, my_username: &str) {
+    debug!("Presence request from: {}", payload.requester);
+    let response = ClientEvent::PresenceResponse(PresenceResponsePayload {
+        request_id: payload.request_id,
+        user: my_username.to_string(),
+    });
+    if let Ok(json) = serde_json::to_string(&response) {
+        let _ = tx.clone().try_send(Message::Text(json));
+    }
 }

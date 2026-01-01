@@ -1,9 +1,10 @@
 use crate::components::statistics::StateEvent;
+use crate::components::voting::VotingState;
 use crate::components::websocket::{CursorSignals, SyncConflict, WsSender, connect_websocket};
 use crate::config;
 use crate::utils::{auth, token_refresh};
 use leptos::prelude::*;
-use shared::events::ChatMessagePayload;
+use shared::events::{ChatMessagePayload, voting::VotingResultPayload};
 use std::collections::HashMap;
 
 use super::AppState;
@@ -61,6 +62,8 @@ pub fn create_room_selected_callback(
     messages: RwSignal<Vec<ChatMessagePayload>>,
     state_events: RwSignal<Vec<StateEvent>>,
     conflict_signal: RwSignal<Option<SyncConflict>>,
+    votings: RwSignal<HashMap<String, VotingState>>,
+    voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
     cfg: StoredValue<config::Config>,
 ) -> impl Fn(String) + Clone {
     move |selected_room_id: String| {
@@ -77,6 +80,8 @@ pub fn create_room_selected_callback(
             messages,
             state_events,
             conflict_signal,
+            votings,
+            voting_results,
             cfg.get_value(),
         );
     }
