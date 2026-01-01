@@ -1,9 +1,11 @@
-use super::websocket::{ConflictType, SyncConflict};
+use super::voting::{VotingActive, VotingState};
+use super::websocket::{ConflictType, SyncConflict, WsSender};
 use crate::config::Theme;
 use crate::i18n::i18n::{t_string, use_i18n};
 use leptos::ev::MouseEvent;
 use leptos::prelude::*;
 use shared::events::voting::{VotingOption, VotingStartPayload, VotingType};
+use std::collections::{HashMap, HashSet};
 
 #[component]
 pub fn ConflictResolver(
@@ -11,10 +13,28 @@ pub fn ConflictResolver(
     username: ReadSignal<String>,
     on_create_voting: impl Fn(VotingStartPayload) + 'static + Copy + Send + Sync,
     on_submit_vote: impl Fn(String, Vec<String>) + 'static + Copy + Send + Sync,
+    on_change_room: impl Fn(String) + 'static + Copy + Send + Sync,
+    current_room: ReadSignal<String>,
+    votings: RwSignal<HashMap<String, VotingState>>,
+    ws_sender: ReadSignal<Option<WsSender>>,
+    voted_in: RwSignal<HashSet<String>>,
+    selected_options_map: RwSignal<HashMap<String, HashSet<String>>>,
     theme: Theme,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let new_room_input = RwSignal::new(String::new());
+    let theme_stored = StoredValue::new(theme);
+
+    // Проверяем, есть ли активное голосование для разрешения конфликта
+    let active_conflict_voting_id = Memo::new(move |_| {
+        votings.with(|map| {
+            map.iter()
+                .find(|(id, state)| {
+                    id.starts_with("conflict_vote_") && matches!(state, VotingState::Active { .. })
+                })
+                .map(|(id, _)| id.clone())
+        })
+    });
 
     let on_move_to_new_room = move |_: MouseEvent| {
         let new_room = new_room_input.get();
@@ -22,27 +42,22 @@ pub fn ConflictResolver(
             // Сохраняем текущий стейт в localStorage для новой комнаты
             if let Some(window) = web_sys::window() {
                 if let Ok(Some(storage)) = window.local_storage() {
-                    // Получаем текущую комнату из URL
-                    if let Some(location) = window.location().search().ok() {
-                        if let Some(old_room) = location
-                            .split("room=")
-                            .nth(1)
-                            .map(|s| s.split('&').next().unwrap_or(""))
-                        {
-                            // Копируем стейт из старой комнаты в новую
-                            if let Ok(Some(old_state_json)) =
-                                storage.get_item(&format!("room_state:{}", old_room))
-                            {
-                                let _ = storage
-                                    .set_item(&format!("room_state:{}", new_room), &old_state_json);
-                            }
-                        }
+                    let old_room = current_room.get();
+                    // Копируем стейт из старой комнаты в новую
+                    if let Ok(Some(old_state_json)) =
+                        storage.get_item(&format!("room_state:{}", old_room))
+                    {
+                        let _ =
+                            storage.set_item(&format!("room_state:{}", new_room), &old_state_json);
+                        // Удаляем стейт старой комнаты
+                        let _ = storage.remove_item(&format!("room_state:{}", old_room));
                     }
                 }
-
-                // Перенаправляем пользователя в новую комнату
-                let _ = window.location().set_href(&format!("/?room={}", new_room));
             }
+
+            // Очищаем конфликт и переходим в новую комнату
+            conflict.set(None);
+            on_change_room(new_room);
         }
     };
 
@@ -75,14 +90,42 @@ pub fn ConflictResolver(
         // Автоматически голосуем "Да" за инициатора
         on_submit_vote(voting_id, vec![".1".to_string()]);
 
-        conflict.set(None);
+        // НЕ закрываем окно конфликта - пусть пользователи проголосуют
+        // Окно останется открытым, пока конфликт не будет разрешён
     };
 
     let on_discard = move |_: MouseEvent| {
-        // Перезагружаем страницу, чтобы получить актуальный стейт
+        // Очищаем локальный стейт
         if let Some(window) = web_sys::window() {
-            let _ = window.location().reload();
+            if let Ok(Some(storage)) = window.local_storage() {
+                let room = current_room.get();
+                let _ = storage.remove_item(&format!("room_state:{}", room));
+                leptos::logging::log!("🗑️ Cleared local state for room: {}", room);
+            }
         }
+
+        // Создаем специальное голосование для сбора snapshots от всех участников
+        let voting_id = format!("discard_collect_{}", js_sys::Date::now() as u64);
+
+        let payload = VotingStartPayload {
+            voting_id: voting_id.clone(),
+            question: t_string!(i18n, conflict.collecting_versions).to_string(),
+            options: vec![VotingOption {
+                id: ".0".to_string(),
+                text: "Present".to_string(),
+            }],
+            voting_type: VotingType::SingleChoice,
+            is_anonymous: false,     // Нужны имена участников
+            timer_seconds: Some(60), // Минута для сбора
+            default_option_id: Some(".0".to_string()),
+            creator: username.get(),
+        };
+
+        on_create_voting(payload);
+        on_submit_vote(voting_id.clone(), vec![".0".to_string()]);
+
+        leptos::logging::log!("🔄 Discarded local changes, collecting snapshots from all users...");
+        conflict.set(None);
     };
 
     view! {
@@ -92,10 +135,11 @@ pub fn ConflictResolver(
                 display: flex; align-items: center; justify-content: center;".to_string()>
                 <div style=format!(
                     "background: {}; color: {}; padding: 1.875rem; border-radius: 0.75rem; \
-                    max-width: 37.5rem; width: 90%; box-shadow: 0 0.25rem 1.25rem rgba(0,0,0,0.5);",
-                    theme.ui_bg_primary, theme.ui_text_primary
+                    max-width: 37.5rem; width: 90%; box-shadow: 0 0.25rem 1.25rem rgba(0,0,0,0.5); \
+                    max-height: 90vh; overflow-y: auto;",
+                    theme_stored.get_value().ui_bg_primary, theme_stored.get_value().ui_text_primary
                 )>
-                    <h2 style=format!("margin-top: 0; color: {};", theme.ui_button_danger)>
+                    <h2 style=format!("margin-top: 0; color: {};", theme_stored.get_value().ui_button_danger)>
                         {move || t_string!(i18n, conflict.title)}
                     </h2>
 
@@ -120,71 +164,97 @@ pub fn ConflictResolver(
                         {move || conflict.get().as_ref().map(|c| format!(": v{}", c.remote_version)).unwrap_or_default()}
                     </p>
 
-                    <hr style=format!("border-color: {}; margin: 1.25rem 0;", theme.ui_border) />
+                    <hr style=format!("border-color: {}; margin: 1.25rem 0;", theme_stored.get_value().ui_border) />
 
-                    <h3>{move || t_string!(i18n, conflict.options_title)}</h3>
+                    // Если есть активное голосование - показываем его, иначе показываем опции
+                    {move || {
+                        if let Some(voting_id) = active_conflict_voting_id.get() {
+                            // Показываем компонент голосования
+                            view! {
+                                <div>
+                                    <h3 style="margin-top: 0;">{move || t_string!(i18n, conflict.voting_in_progress)}</h3>
+                                    <VotingActive
+                                        voting_id=voting_id
+                                        voting=votings
+                                        username=username
+                                        ws_sender=ws_sender
+                                        voted_in=voted_in
+                                        selected_options_map=selected_options_map
+                                        theme=theme_stored.get_value()
+                                    />
+                                </div>
+                            }.into_any()
+                        } else {
+                            // Показываем опции конфликта
+                            view! {
+                                <div>
+                                    <h3>{move || t_string!(i18n, conflict.options_title)}</h3>
 
-                    <p style="margin-top: 0.9375rem;">
-                        <strong>"1. "</strong>
-                        {move || t_string!(i18n, conflict.option_move_room)}
-                    </p>
-                    <input
-                        type="text"
-                        placeholder={move || t_string!(i18n, conflict.new_room_placeholder)}
-                        style=format!(
-                            "width: calc(100% - 1.25rem); padding: 0.625rem; \
-                            background: {}; color: {}; border: 0.0625rem solid {}; \
-                            border-radius: 0.375rem; margin: 0.625rem 0;",
-                            theme.ui_bg_secondary, theme.ui_text_primary, theme.ui_border
-                        )
-                        on:input=move |ev| {
-                            new_room_input.set(event_target_value(&ev));
+                                    <p style="margin-top: 0.9375rem;">
+                                        <strong>"1. "</strong>
+                                        {move || t_string!(i18n, conflict.option_move_room)}
+                                    </p>
+                                    <input
+                                        type="text"
+                                        placeholder={move || t_string!(i18n, conflict.new_room_placeholder)}
+                                        style=format!(
+                                            "width: calc(100% - 1.25rem); padding: 0.625rem; \
+                                            background: {}; color: {}; border: 0.0625rem solid {}; \
+                                            border-radius: 0.375rem; margin: 0.625rem 0;",
+                                            theme_stored.get_value().ui_bg_secondary, theme_stored.get_value().ui_text_primary, theme_stored.get_value().ui_border
+                                        )
+                                        on:input=move |ev| {
+                                            new_room_input.set(event_target_value(&ev));
+                                        }
+                                        prop:value=move || new_room_input.get()
+                                    />
+                                    <button
+                                        style=format!(
+                                            "padding: 0.625rem 1.25rem; background: {}; color: {}; \
+                                            border: none; border-radius: 0.375rem; cursor: pointer; \
+                                            font-size: 0.875rem; margin-bottom: 0.9375rem;",
+                                            theme_stored.get_value().ui_button_primary, theme_stored.get_value().ui_text_primary
+                                        )
+                                        on:click=on_move_to_new_room
+                                    >
+                                        {move || t_string!(i18n, conflict.move_button)}
+                                    </button>
+
+                                    <p style="margin-top: 0.9375rem;">
+                                        <strong>"2. "</strong>
+                                        {move || t_string!(i18n, conflict.option_force_sync)}
+                                    </p>
+                                    <button
+                                        style=format!(
+                                            "padding: 0.625rem 1.25rem; background: #ff9800; color: {}; \
+                                            border: none; border-radius: 0.375rem; cursor: pointer; \
+                                            font-size: 0.875rem; margin-bottom: 0.9375rem;",
+                                            theme_stored.get_value().ui_text_primary
+                                        )
+                                        on:click=on_force_sync
+                                    >
+                                        {move || t_string!(i18n, conflict.force_button)}
+                                    </button>
+
+                                    <p style="margin-top: 0.9375rem;">
+                                        <strong>"3. "</strong>
+                                        {move || t_string!(i18n, conflict.option_discard)}
+                                    </p>
+                                    <button
+                                        style=format!(
+                                            "padding: 0.625rem 1.25rem; background: {}; color: {}; \
+                                            border: none; border-radius: 0.375rem; cursor: pointer; \
+                                            font-size: 0.875rem;",
+                                            theme_stored.get_value().ui_button_danger, theme_stored.get_value().ui_text_primary
+                                        )
+                                        on:click=on_discard
+                                    >
+                                        {move || t_string!(i18n, conflict.discard_button)}
+                                    </button>
+                                </div>
+                            }.into_any()
                         }
-                        prop:value=move || new_room_input.get()
-                    />
-                    <button
-                        style=format!(
-                            "padding: 0.625rem 1.25rem; background: {}; color: {}; \
-                            border: none; border-radius: 0.375rem; cursor: pointer; \
-                            font-size: 0.875rem; margin-bottom: 0.9375rem;",
-                            theme.ui_button_primary, theme.ui_text_primary
-                        )
-                        on:click=on_move_to_new_room
-                    >
-                        {move || t_string!(i18n, conflict.move_button)}
-                    </button>
-
-                    <p style="margin-top: 0.9375rem;">
-                        <strong>"2. "</strong>
-                        {move || t_string!(i18n, conflict.option_force_sync)}
-                    </p>
-                    <button
-                        style=format!(
-                            "padding: 0.625rem 1.25rem; background: #ff9800; color: {}; \
-                            border: none; border-radius: 0.375rem; cursor: pointer; \
-                            font-size: 0.875rem; margin-bottom: 0.9375rem;",
-                            theme.ui_text_primary
-                        )
-                        on:click=on_force_sync
-                    >
-                        {move || t_string!(i18n, conflict.force_button)}
-                    </button>
-
-                    <p style="margin-top: 0.9375rem;">
-                        <strong>"3. "</strong>
-                        {move || t_string!(i18n, conflict.option_discard)}
-                    </p>
-                    <button
-                        style=format!(
-                            "padding: 0.625rem 1.25rem; background: {}; color: {}; \
-                            border: none; border-radius: 0.375rem; cursor: pointer; \
-                            font-size: 0.875rem;",
-                            theme.ui_button_danger, theme.ui_text_primary
-                        )
-                        on:click=on_discard
-                    >
-                        {move || t_string!(i18n, conflict.discard_button)}
-                    </button>
+                    }}
                 </div>
             </div>
         </Show>

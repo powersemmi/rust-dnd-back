@@ -1,6 +1,7 @@
 use super::types::VotingState;
 use crate::config::Theme;
 use crate::i18n::i18n::{t, t_string, use_i18n};
+use leptos::logging::log;
 use leptos::prelude::*;
 use shared::events::voting::VotingType;
 use shared::events::{ClientEvent, VotingCastPayload};
@@ -16,9 +17,15 @@ pub fn VotingActive(
     selected_options_map: RwSignal<HashMap<String, HashSet<String>>>,
     theme: Theme,
 ) -> impl IntoView {
+    leptos::logging::log!(
+        "VotingActive component created for voting_id: {}",
+        voting_id
+    );
     let i18n = use_i18n();
 
     let cast_vote = move |vid: String| {
+        log!("cast_vote called for voting_id: {}", vid);
+
         let selected = selected_options_map
             .get()
             .get(&vid)
@@ -27,7 +34,10 @@ pub fn VotingActive(
             .into_iter()
             .collect::<Vec<_>>();
 
+        log!("Selected options: {:?}", selected);
+
         if selected.is_empty() {
+            log!("No options selected, aborting vote");
             return;
         }
 
@@ -37,22 +47,33 @@ pub fn VotingActive(
             selected_option_ids: selected,
         };
 
+        log!("Sending VotingCast payload: {:?}", payload);
+
         if let Some(mut sender) = ws_sender.get() {
             if let Ok(json) = serde_json::to_string(&ClientEvent::VotingCast(payload)) {
+                log!("Sending VotingCast JSON: {}", json);
                 let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
             }
+        } else {
+            log!("WebSocket sender not available!");
         }
 
         voted_in.update(|set| {
             set.insert(vid);
         });
+
+        log!("Vote cast successfully");
     };
 
     view! {
         {move || {
-            voting.get().get(&voting_id).cloned().map(|state| {
+            let state_opt = voting.get().get(&voting_id).cloned();
+            log!("VotingActive rendering, state exists: {}", state_opt.is_some());
+
+            state_opt.map(|state| {
                 match state {
-                    VotingState::Active { voting, participants: _, votes, remaining_seconds } => {
+                    VotingState::Active { voting, participants: _, votes, remaining_seconds, .. } => {
+                        log!("Rendering Active voting: {}", voting.question);
                         let vid = voting_id.clone();
                         let vid_check = voting_id.clone();
                         let voting_type_stored = StoredValue::new(voting.voting_type.clone());
@@ -140,23 +161,30 @@ pub fn VotingActive(
                                                     }
                                                     on:click=move |_| {
                                                         if !has_voted {
+                                                            log!("Option clicked: {} for voting {}", option_id, vid_for_click);
                                                             let vid_clone = vid_for_click.clone();
                                                             selected_options_map.update(|map| {
-                                                                let entry = map.entry(vid_clone).or_insert_with(HashSet::new);
+                                                                let entry = map.entry(vid_clone.clone()).or_insert_with(HashSet::new);
                                                                 match voting_type {
                                                                     VotingType::SingleChoice => {
                                                                         entry.clear();
                                                                         entry.insert(option_id.clone());
+                                                                        log!("SingleChoice: selected {}", option_id);
                                                                     }
                                                                     VotingType::MultipleChoice => {
                                                                         if entry.contains(&option_id) {
                                                                             entry.remove(&option_id);
+                                                                            log!("MultipleChoice: deselected {}", option_id);
                                                                         } else {
                                                                             entry.insert(option_id.clone());
+                                                                            log!("MultipleChoice: selected {}", option_id);
                                                                         }
                                                                     }
                                                                 }
+                                                                log!("Updated selection for {}: {:?}", vid_clone, entry);
                                                             });
+                                                        } else {
+                                                            log!("Click ignored - already voted");
                                                         }
                                                     }
                                                 >

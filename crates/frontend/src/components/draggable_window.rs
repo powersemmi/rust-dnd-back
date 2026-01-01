@@ -1,4 +1,5 @@
 use crate::config::Theme;
+use leptos::ev;
 use leptos::logging::log;
 use leptos::prelude::*;
 use leptos::web_sys::MouseEvent;
@@ -52,33 +53,41 @@ pub fn DraggableWindow(
         set_size_start_h.set(height.get());
     };
 
-    let on_global_mouse_move = move |ev: MouseEvent| {
-        if is_dragging.get() {
-            let dx = ev.client_x() - drag_start_x.get();
-            let dy = ev.client_y() - drag_start_y.get();
-            set_pos_x.set(window_start_x.get() + dx);
-            set_pos_y.set(window_start_y.get() + dy);
-        } else if is_resizing.get() {
-            let dx = ev.client_x() - resize_start_x.get();
-            let dy = ev.client_y() - resize_start_y.get();
-            set_width.set((size_start_w.get() + dx).max(min_width));
-            set_height.set((size_start_h.get() + dy).max(min_height));
-        }
-    };
-
-    let on_global_mouse_up = move |_: MouseEvent| {
-        set_is_dragging.set(false);
-        set_is_resizing.set(false);
-    };
-
     let display = move || if is_open.get() { "flex" } else { "none" };
 
     log!("DraggableWindow:{}", theme.ui_bg_primary);
 
+    // Навешиваем глобальные обработчики на document для корректной работы при выходе курсора за пределы окна
+    Effect::new(move || {
+        use leptos::ev::MouseEvent as LeptosMouseEvent;
+
+        let handle_mousemove = window_event_listener(ev::mousemove, move |ev: LeptosMouseEvent| {
+            if is_dragging.get() {
+                let dx = ev.client_x() - drag_start_x.get();
+                let dy = ev.client_y() - drag_start_y.get();
+                set_pos_x.set(window_start_x.get() + dx);
+                set_pos_y.set(window_start_y.get() + dy);
+            } else if is_resizing.get() {
+                let dx = ev.client_x() - resize_start_x.get();
+                let dy = ev.client_y() - resize_start_y.get();
+                set_width.set((size_start_w.get() + dx).max(min_width));
+                set_height.set((size_start_h.get() + dy).max(min_height));
+            }
+        });
+
+        let handle_mouseup = window_event_listener(ev::mouseup, move |_: LeptosMouseEvent| {
+            set_is_dragging.set(false);
+            set_is_resizing.set(false);
+        });
+
+        on_cleanup(move || {
+            drop(handle_mousemove);
+            drop(handle_mouseup);
+        });
+    });
+
     view! {
         <div
-            on:mousemove=on_global_mouse_move
-            on:mouseup=on_global_mouse_up
             on:mousedown=move |_| {
                 if let Some(callback) = on_focus {
                     callback.run(());

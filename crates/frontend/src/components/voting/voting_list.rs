@@ -16,7 +16,16 @@ pub fn VotingList(
     view! {
         <div>
             {move || {
-                if votings.get().is_empty() {
+                let all_votings = votings.get();
+                leptos::logging::log!("VotingList: Total votings: {}", all_votings.len());
+
+                let active_votings: Vec<_> = all_votings.into_iter()
+                    .filter(|(_, state)| matches!(state, VotingState::Active { .. }))
+                    .collect();
+
+                leptos::logging::log!("VotingList: Active votings: {}", active_votings.len());
+
+                if active_votings.is_empty() {
                     view! {
                         <div style=format!("text-align: center; padding: 2.5rem; color: {};", theme.ui_text_muted)>
                             {t!(i18n, voting.no_active_votings)}

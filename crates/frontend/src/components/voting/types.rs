@@ -9,6 +9,7 @@ pub enum VotingState {
         participants: Vec<String>,
         votes: HashMap<String, Vec<String>>, // user -> selected_option_ids
         remaining_seconds: Option<u32>,
+        created_at: f64, // timestamp in milliseconds
     },
     Results {
         voting: VotingStartPayload,

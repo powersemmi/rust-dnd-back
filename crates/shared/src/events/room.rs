@@ -31,7 +31,7 @@ pub struct RoomState {
     /// Текущий хеш состояния
     pub current_hash: String,
 
-    /// История версий (последние 50): (версия, хеш)
+    /// История версий (последние 500): (версия, хеш)
     #[serde(default)]
     pub history_log: Vec<(u64, String)>,
 }
@@ -81,9 +81,9 @@ impl RoomState {
         // Добавляем текущую версию-хеш в историю
         self.history_log.push((self.version, new_hash.clone()));
 
-        // Обрезаем историю до 50 элементов
-        if self.history_log.len() > 50 {
-            self.history_log.drain(0..self.history_log.len() - 50);
+        // Обрезаем историю до 500 элементов
+        if self.history_log.len() > 500 {
+            self.history_log.drain(0..self.history_log.len() - 500);
         }
 
         self.current_hash = new_hash;

@@ -111,6 +111,9 @@ leptos_i18n::declare_locales! {
             force_button: "Force Sync My Version",
             option_discard: "Discard your changes and reload the remote state",
             discard_button: "Discard My Changes",
+            voting_in_progress: "Voting in Progress",
+            collecting_versions: "Collecting state versions...",
+            select_version: "Select which version to use:",
         },
     },
 
@@ -223,6 +226,9 @@ leptos_i18n::declare_locales! {
             force_button: "Принудительно синхронизировать мою версию",
             option_discard: "Отбросить ваши изменения и загрузить удалённое состояние",
             discard_button: "Отбросить мои изменения",
+            voting_in_progress: "Идёт голосование",
+            collecting_versions: "Сбор версий состояния...",
+            select_version: "Выберите, какую версию использовать:",
         }
     },
 }

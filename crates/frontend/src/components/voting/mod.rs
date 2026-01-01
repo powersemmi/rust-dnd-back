@@ -4,7 +4,7 @@ mod voting_create;
 mod voting_list;
 
 pub use types::*;
-use voting_active::VotingActive;
+pub use voting_active::VotingActive;
 use voting_create::VotingCreate;
 use voting_list::VotingList;
 
@@ -70,6 +70,7 @@ pub fn VotingWindow(
                 participants,
                 votes,
                 remaining_seconds,
+                created_at,
             } = state
             {
                 let creator = voting.creator.clone();
@@ -80,13 +81,31 @@ pub fn VotingWindow(
                     let total_participants = participants.len();
                     let total_voted = votes.len();
 
-                    // Условие 1: Все проголосовали
-                    let all_voted = total_participants > 0 && total_voted == total_participants;
+                    // Проверяем минимальное время существования голосования (5 секунд)
+                    let now = js_sys::Date::now();
+                    let age_ms = now - created_at;
+                    let min_age_reached = age_ms >= 5000.0; // 5 секунд
+
+                    // Условие 1: Все проголосовали (минимум 2 участника)
+                    let all_voted = total_participants > 1 && total_voted == total_participants;
 
                     // Условие 2: Таймер истёк
                     let timer_expired = *remaining_seconds == Some(0);
 
-                    if all_voted || timer_expired {
+                    log::debug!(
+                        "Voting {}: participants={}, voted={}, age={}ms, min_age_reached={}, all_voted={}, timer_expired={}",
+                        voting_id,
+                        total_participants,
+                        total_voted,
+                        age_ms,
+                        min_age_reached,
+                        all_voted,
+                        timer_expired
+                    );
+
+                    // Завершаем только если прошло минимальное время И (все проголосовали ИЛИ таймер истёк)
+                    if min_age_reached && (all_voted || timer_expired) {
+                        log::debug!("Voting {} is completing!", voting_id);
                         // Подсчитываем результаты
                         let mut results_map: HashMap<String, u32> = HashMap::new();
                         let mut voters_map: HashMap<String, Vec<String>> = HashMap::new();

@@ -1,5 +1,5 @@
 use super::types::{ConflictType, SyncConflict};
-use log::warn;
+use leptos::logging::warn;
 use shared::events::RoomState;
 
 pub struct SyncValidator;

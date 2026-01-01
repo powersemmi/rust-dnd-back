@@ -13,6 +13,9 @@ pub struct SyncVersionPayload {
     pub username: String,
     #[cfg_attr(feature = "validation", validate(range(min = 0)))]
     pub version: u64,
+    pub state_hash: String,
+    // Список последних хешей (до 500) для определения точки расхождения
+    pub recent_hashes: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

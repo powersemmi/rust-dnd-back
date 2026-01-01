@@ -78,6 +78,12 @@ pub fn App() -> impl IntoView {
     // Голосования, в которых пользователь проголосовал
     let voted_in = RwSignal::new(std::collections::HashSet::<String>::new());
 
+    // Выбранные опции для каждого голосования
+    let selected_options_map = RwSignal::new(std::collections::HashMap::<
+        String,
+        std::collections::HashSet<String>,
+    >::new());
+
     // WebSocket sender
     let (ws_sender, set_ws_sender) = signal::<Option<WsSender>>(None);
 
@@ -371,6 +377,14 @@ pub fn App() -> impl IntoView {
                                 };
                                 submit_vote_fn
                             }
+                            on_change_room=move |new_room: String| {
+                                on_room_selected.get_value()(new_room)
+                            }
+                            current_room=room_id
+                            votings=votings
+                            ws_sender=ws_sender
+                            voted_in=voted_in
+                            selected_options_map=selected_options_map
                             theme=theme.get_value()
                         />
 
