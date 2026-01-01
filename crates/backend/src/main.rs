@@ -1,4 +1,5 @@
 use axum::Router;
+use axum::http::Method;
 use axum::routing::{get, post};
 use axum::http::Method;
 use backend::handlers::{auth, room};
