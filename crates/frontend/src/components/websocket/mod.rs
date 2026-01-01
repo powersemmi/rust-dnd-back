@@ -6,4 +6,4 @@ mod types;
 mod utils;
 
 pub use connection::{WsSender, connect_websocket};
-pub use types::{ConflictType, CursorSignals, SyncConflict};
+pub use types::{ConflictResolutionHandle, ConflictType, CursorSignals, SyncConflict};

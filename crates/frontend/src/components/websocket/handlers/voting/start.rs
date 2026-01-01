@@ -77,19 +77,30 @@ pub fn handle_voting_start(
     if let Some(seconds) = timer_seconds {
         let voting_id_timer = voting_id.clone();
         spawn_local(async move {
-            let mut remaining = seconds;
-            while remaining > 0 {
+            let mut remaining = seconds as i32;
+            // Считаем до 0, затем ещё 5 секунд ожидания (отрицательные значения)
+            let grace_period = -5i32;
+
+            while remaining > grace_period {
                 TimeoutFuture::new(1000).await;
                 remaining -= 1;
+
                 votings.update(|map| {
                     if let Some(VotingState::Active {
                         remaining_seconds, ..
                     }) = map.get_mut(&voting_id_timer)
                     {
-                        *remaining_seconds = Some(remaining);
+                        // Показываем 0 если уже в grace period, иначе показываем оставшееся время
+                        *remaining_seconds =
+                            Some(if remaining >= 0 { remaining as u32 } else { 0 });
                     }
                 });
             }
+
+            log!(
+                "Voting {} timer finished (including grace period)",
+                voting_id_timer
+            );
         });
     }
 }

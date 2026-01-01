@@ -8,7 +8,7 @@ use super::super::room_selector::RoomSelector;
 use super::super::settings::Settings;
 use super::super::side_menu::SideMenu;
 use super::super::statistics::{StateEvent, StatisticsWindow};
-use super::super::websocket::{CursorSignals, SyncConflict, WsSender};
+use super::super::websocket::{ConflictResolutionHandle, CursorSignals, SyncConflict, WsSender};
 use super::navigation::create_room_selected_callback;
 use super::{
     AppState, create_login_success_callback, create_mouse_move_handler, create_navigation_callbacks,
@@ -98,6 +98,9 @@ pub fn App() -> impl IntoView {
     let has_chat_notification = RwSignal::new(false);
     let chat_notification_count = RwSignal::new(0u32);
 
+    // Handle для запуска разрешения конфликта
+    let conflict_resolution_handle = ConflictResolutionHandle::new();
+
     // Отслеживание активного окна (последнее открытое)
     #[derive(Clone, Copy, PartialEq)]
     enum ActiveWindow {
@@ -155,6 +158,7 @@ pub fn App() -> impl IntoView {
         has_chat_notification,
         chat_notification_count,
         cfg,
+        conflict_resolution_handle.clone(),
     ));
 
     // Обработчик движения мыши
@@ -386,6 +390,12 @@ pub fn App() -> impl IntoView {
                             voted_in=voted_in
                             selected_options_map=selected_options_map
                             theme=theme.get_value()
+                            on_start_conflict_resolution={
+                                let handle = conflict_resolution_handle.clone();
+                                move || {
+                                    handle.invoke();
+                                }
+                            }
                         />
 
                         // Окно голосований

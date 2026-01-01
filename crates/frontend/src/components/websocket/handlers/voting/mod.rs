@@ -1,6 +1,5 @@
 mod cast;
 mod conflict;
-mod discard;
 mod end;
 mod hash_select;
 mod result;

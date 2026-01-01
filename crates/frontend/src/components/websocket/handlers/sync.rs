@@ -46,12 +46,61 @@ pub fn handle_sync_announce(
     local_version: &Rc<RefCell<u64>>,
     state_events: RwSignal<Vec<StateEvent>>,
     conflict_signal: RwSignal<Option<SyncConflict>>,
+    collected_announces: &Rc<RefCell<Vec<SyncVersionPayload>>>,
+    is_collecting_announces: &Rc<RefCell<bool>>,
 ) {
+    // Если мы в режиме сбора анонсов для конфликт-резолюции, собираем и возвращаем
+    if *is_collecting_announces.borrow() {
+        use super::sync_discard;
+        sync_discard::handle_announce_for_conflict(payload, collected_announces);
+        return;
+    }
+
     let my_ver = *local_version.borrow();
     let state = room_state.borrow();
     let my_hash = state.current_hash.clone();
 
-    // Проверяем линию развития состояния (lineage check)
+    // Специальная обработка для новичков (версия 0 или пустой хеш)
+    let i_am_newcomer = my_ver == 0 || my_hash.is_empty();
+    let they_are_newcomer = payload.version == 0 || payload.state_hash.is_empty();
+
+    // Если они новичок - просто игнорируем их анонс, не создаём конфликтов
+    if they_are_newcomer {
+        log!(
+            "🆕 {} is a newcomer (v{}, empty hash), ignoring",
+            payload.username,
+            payload.version
+        );
+        return;
+    }
+
+    // Если я новичок и вижу кого-то с непустым состоянием
+    if i_am_newcomer && !they_are_newcomer {
+        log!(
+            "🆕 I'm a newcomer, {} has state v{} (hash: {}...)",
+            payload.username,
+            payload.version,
+            &payload.state_hash[..8.min(payload.state_hash.len())]
+        );
+
+        // Добавляем в кандидаты для синхронизации
+        sync_candidates
+            .borrow_mut()
+            .push((payload.username.clone(), payload.version));
+
+        utils::log_event(
+            state_events,
+            my_ver,
+            "SYNC_VERSION_ANNOUNCE",
+            &format!(
+                "{} announced v{} (newcomer will sync)",
+                payload.username, payload.version
+            ),
+        );
+        return;
+    }
+
+    // Далее - оба НЕ новички, проверяем линию развития состояния (lineage check)
     let lineage_status = if my_hash == payload.state_hash {
         // Одинаковые хеши - идентичные состояния
         log!("Identical states with {}: same hash", payload.username);
@@ -84,12 +133,16 @@ pub fn handle_sync_announce(
                 my_ver
             );
 
-            // Устанавливаем конфликт
-            conflict_signal.set(Some(SyncConflict {
-                conflict_type: ConflictType::Fork,
-                local_version: my_ver,
-                remote_version: payload.version,
-            }));
+            // Устанавливаем конфликт ТОЛЬКО если не в режиме сбора анонсов
+            if !*is_collecting_announces.borrow() {
+                conflict_signal.set(Some(SyncConflict {
+                    conflict_type: ConflictType::Fork,
+                    local_version: my_ver,
+                    remote_version: payload.version,
+                }));
+            } else {
+                log!("⚠️ Fork detected but ignoring (in announce collection mode)");
+            }
 
             "FORK"
         }
@@ -110,12 +163,17 @@ pub fn handle_sync_announce(
             my_ver
         );
 
-        // Устанавливаем конфликт
-        conflict_signal.set(Some(SyncConflict {
-            conflict_type: ConflictType::SplitBrain,
-            local_version: my_ver,
-            remote_version: payload.version,
-        }));
+        // Устанавливаем конфликт ТОЛЬКО если не в режиме сбора анонсов
+        // (иначе получается бесконечный цикл открытия окон конфликта)
+        if !*is_collecting_announces.borrow() {
+            conflict_signal.set(Some(SyncConflict {
+                conflict_type: ConflictType::SplitBrain,
+                local_version: my_ver,
+                remote_version: payload.version,
+            }));
+        } else {
+            log!("⚠️ Split brain detected but ignoring (in announce collection mode)");
+        }
 
         "SPLIT_BRAIN"
     };
@@ -129,16 +187,18 @@ pub fn handle_sync_announce(
             .push((payload.username.clone(), payload.version));
     }
 
+    let hash_preview = if payload.state_hash.is_empty() {
+        "<empty>"
+    } else {
+        &payload.state_hash[..8.min(payload.state_hash.len())]
+    };
     utils::log_event(
         state_events,
         my_ver,
         "SYNC_VERSION_ANNOUNCE",
         &format!(
             "{} announced v{} (status: {}, hash: {}...)",
-            payload.username,
-            payload.version,
-            lineage_status,
-            &payload.state_hash[..8]
+            payload.username, payload.version, lineage_status, hash_preview
         ),
     );
 }

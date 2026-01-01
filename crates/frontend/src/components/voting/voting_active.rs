@@ -23,6 +23,9 @@ pub fn VotingActive(
     );
     let i18n = use_i18n();
 
+    // Сохраняем сигнал голосований для использования в эффектах
+    let voting_signal = voting;
+
     let cast_vote = move |vid: String| {
         log!("cast_vote called for voting_id: {}", vid);
 
@@ -67,7 +70,7 @@ pub fn VotingActive(
 
     view! {
         {move || {
-            let state_opt = voting.get().get(&voting_id).cloned();
+            let state_opt = voting_signal.get().get(&voting_id).cloned();
             log!("VotingActive rendering, state exists: {}", state_opt.is_some());
 
             state_opt.map(|state| {
@@ -78,8 +81,44 @@ pub fn VotingActive(
                         let vid_check = voting_id.clone();
                         let voting_type_stored = StoredValue::new(voting.voting_type.clone());
                         let options_stored = StoredValue::new(voting.options.clone());
+                        let default_option_stored = StoredValue::new(voting.default_option_id.clone());
 
                         let has_voted = voted_in.get().contains(&vid_check);
+
+                        // Эффект для автоматического голосования при истечении таймера
+                        {
+                            let vid_effect = vid.clone();
+                            let vid_check_effect = vid_check.clone();
+                            Effect::new(move |_| {
+                                let state_opt = voting_signal.get().get(&vid_effect).cloned();
+                                if let Some(VotingState::Active { remaining_seconds: Some(0), .. }) = state_opt {
+                                    // Таймер истёк
+                                    let has_voted = voted_in.get().contains(&vid_check_effect);
+                                    if !has_voted {
+                                        // Пользователь не проголосовал, голосуем за дефолтную опцию
+                                        if let Some(default_id) = default_option_stored.get_value() {
+                                            log!("Timer expired, auto-voting for default option: {}", default_id);
+
+                                            let payload = VotingCastPayload {
+                                                voting_id: vid_effect.clone(),
+                                                user: username.get(),
+                                                selected_option_ids: vec![default_id],
+                                            };
+
+                                            if let Some(mut sender) = ws_sender.get() {
+                                                if let Ok(json) = serde_json::to_string(&ClientEvent::VotingCast(payload)) {
+                                                    let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
+                                                }
+                                            }
+
+                                            voted_in.update(|set| {
+                                                set.insert(vid_effect.clone());
+                                            });
+                                        }
+                                    }
+                                }
+                            });
+                        }
 
                         // Подсчитываем промежуточные результаты для отображения
                         let total_voted_before = votes.len() as u32;

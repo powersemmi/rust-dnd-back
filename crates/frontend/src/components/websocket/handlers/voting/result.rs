@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use super::{conflict, discard, hash_select};
+use super::{conflict, hash_select};
 
 #[allow(clippy::too_many_arguments)]
 pub fn handle_voting_result(
@@ -24,7 +24,7 @@ pub fn handle_voting_result(
     my_username: &str,
     expected_snapshot_from: &Rc<RefCell<Option<String>>>,
     collected_snapshots: &Rc<RefCell<Vec<(String, RoomState)>>>,
-    is_collecting_snapshots: &Rc<RefCell<bool>>,
+    _is_collecting_snapshots: &Rc<RefCell<bool>>,
     messages_signal: RwSignal<Vec<ChatMessagePayload>>,
     conflict_signal: RwSignal<Option<SyncConflict>>,
 ) {
@@ -85,23 +85,6 @@ pub fn handle_voting_result(
             tx,
             my_username,
             expected_snapshot_from,
-        );
-    }
-
-    // Проверяем, является ли это голосованием для сбора snapshots при discard
-    if payload.voting_id.starts_with("discard_collect_") {
-        discard::handle_discard_collection_voting_result(
-            payload.clone(),
-            tx,
-            collected_snapshots,
-            is_collecting_snapshots,
-            room_state,
-            local_version,
-            last_synced_version,
-            room_name,
-            messages_signal,
-            voting_results,
-            conflict_signal,
         );
     }
 

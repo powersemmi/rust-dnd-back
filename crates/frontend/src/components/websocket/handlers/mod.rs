@@ -2,6 +2,7 @@ mod chat;
 mod mouse;
 mod presence;
 mod sync;
+pub mod sync_discard;
 mod voting;
 
 use crate::components::statistics::StateEvent;
@@ -36,6 +37,8 @@ pub fn handle_event(
     expected_snapshot_from: &Rc<RefCell<Option<String>>>,
     collected_snapshots: &Rc<RefCell<Vec<(String, RoomState)>>>,
     is_collecting_snapshots: &Rc<RefCell<bool>>,
+    collected_announces: &Rc<RefCell<Vec<shared::events::SyncVersionPayload>>>,
+    is_collecting_announces: &Rc<RefCell<bool>>,
 ) {
     match event {
         ClientEvent::ChatMessage(msg) => chat::handle_chat_message(
@@ -63,6 +66,8 @@ pub fn handle_event(
             local_version,
             state_events,
             conflict_signal,
+            collected_announces,
+            is_collecting_announces,
         ),
         ClientEvent::SyncSnapshotRequest(payload) => sync::handle_snapshot_request(
             payload,

@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use super::handlers;
-use super::types::SyncConflict;
+use super::types::{ConflictResolutionHandle, SyncConflict};
 
 pub type WsSender = futures::channel::mpsc::Sender<Message>;
 
@@ -37,6 +37,7 @@ pub fn connect_websocket(
     has_chat_notification: RwSignal<bool>,
     chat_notification_count: RwSignal<u32>,
     config: config::Config,
+    conflict_resolution_handle: ConflictResolutionHandle,
 ) {
     // Инициализация состояния
     let local_version = Rc::new(RefCell::new(0u64));
@@ -46,6 +47,11 @@ pub fn connect_websocket(
     let collected_snapshots: Rc<RefCell<Vec<(String, RoomState)>>> =
         Rc::new(RefCell::new(Vec::new()));
     let is_collecting_snapshots: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+
+    // Для конфликт-резолюции через сбор анонсов
+    let collected_announces: Rc<RefCell<Vec<shared::events::SyncVersionPayload>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let is_collecting_announces: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
 
     // Загрузка из localStorage
     if let Some(data) = storage::load_state(&room_name) {
@@ -70,6 +76,32 @@ pub fn connect_websocket(
                 let (mut write, read) = ws.split();
                 let (tx, mut rx) = futures::channel::mpsc::channel::<Message>(1000);
                 set_ws_sender.set(Some(tx.clone()));
+
+                // Устанавливаем callback для разрешения конфликта
+                let tx_for_callback = tx.clone();
+                let collected_announces_cb = collected_announces.clone();
+                let is_collecting_announces_cb = is_collecting_announces.clone();
+                let local_version_cb = local_version.clone();
+                let last_synced_version_cb = last_synced_version.clone();
+                let room_state_cb = room_state.clone();
+                let room_name_cb = room_name_clone.clone();
+                let expected_snapshot_from_cb = expected_snapshot_from.clone();
+
+                conflict_resolution_handle.set_callback(move || {
+                    use crate::components::websocket::handlers::sync_discard;
+                    sync_discard::start_conflict_resolution(
+                        &tx_for_callback,
+                        &collected_announces_cb,
+                        &is_collecting_announces_cb,
+                        &local_version_cb,
+                        &last_synced_version_cb,
+                        &room_state_cb,
+                        &room_name_cb,
+                        messages_signal,
+                        voting_results,
+                        &expected_snapshot_from_cb,
+                    );
+                });
 
                 // Поток отправки сообщений
                 spawn_local(async move {
@@ -112,6 +144,8 @@ pub fn connect_websocket(
                     expected_snapshot_from,
                     collected_snapshots,
                     is_collecting_snapshots,
+                    collected_announces,
+                    is_collecting_announces,
                 )
                 .await;
             }
@@ -210,6 +244,8 @@ async fn process_messages(
     expected_snapshot_from: Rc<RefCell<Option<String>>>,
     collected_snapshots: Rc<RefCell<Vec<(String, RoomState)>>>,
     is_collecting_snapshots: Rc<RefCell<bool>>,
+    collected_announces: Rc<RefCell<Vec<shared::events::SyncVersionPayload>>>,
+    is_collecting_announces: Rc<RefCell<bool>>,
 ) {
     while let Some(msg) = read.next().await {
         match msg {
@@ -237,6 +273,8 @@ async fn process_messages(
                         &expected_snapshot_from,
                         &collected_snapshots,
                         &is_collecting_snapshots,
+                        &collected_announces,
+                        &is_collecting_announces,
                     );
                 } else {
                     log!("Failed to parse event: {}", text);

@@ -1,6 +1,8 @@
 use crate::components::statistics::StateEvent;
 use crate::components::voting::VotingState;
-use crate::components::websocket::{CursorSignals, SyncConflict, WsSender, connect_websocket};
+use crate::components::websocket::{
+    ConflictResolutionHandle, CursorSignals, SyncConflict, WsSender, connect_websocket,
+};
 use crate::config;
 use crate::utils::{auth, token_refresh};
 use leptos::prelude::*;
@@ -69,7 +71,9 @@ pub fn create_room_selected_callback(
     has_chat_notification: RwSignal<bool>,
     chat_notification_count: RwSignal<u32>,
     cfg: StoredValue<config::Config>,
+    conflict_resolution_handle: ConflictResolutionHandle,
 ) -> impl Fn(String) + Clone {
+    let handle_clone = conflict_resolution_handle.clone();
     move |selected_room_id: String| {
         set_room_id.set(selected_room_id.clone());
         set_app_state.set(AppState::Connected);
@@ -91,6 +95,7 @@ pub fn create_room_selected_callback(
             has_chat_notification,
             chat_notification_count,
             cfg.get_value(),
+            handle_clone.clone(),
         );
     }
 }

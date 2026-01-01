@@ -11,11 +11,22 @@ pub fn handle_mouse_event(
         return;
     }
 
+    leptos::logging::log!(
+        "🖱️ [MOUSE] Received cursor from {}: ({}, {})",
+        mouse_event.user_id,
+        mouse_event.x,
+        mouse_event.y
+    );
+
     set_cursors.update(|cursors| {
         if let Some(cursor_signals) = cursors.get(&mouse_event.user_id) {
             cursor_signals.set_x.set(mouse_event.x);
             cursor_signals.set_y.set(mouse_event.y);
         } else {
+            leptos::logging::log!(
+                "🖱️ [MOUSE] Creating new cursor for: {}",
+                mouse_event.user_id
+            );
             let (x, set_x) = signal(mouse_event.x);
             let (y, set_y) = signal(mouse_event.y);
             cursors.insert(

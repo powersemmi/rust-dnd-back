@@ -73,7 +73,7 @@ fn send_mouse_event_throttled(
         x,
         y,
         mouse_event_type: MouseEventTypeEnum::Move,
-        user_id: user,
+        user_id: user.clone(),
     });
 
     thread_local! {
@@ -92,8 +92,13 @@ fn send_mouse_event_throttled(
     if should_send {
         if let Some(mut sender) = ws_sender.get() {
             if let Ok(json) = serde_json::to_string(&event) {
-                let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
+                let send_result = sender.try_send(gloo_net::websocket::Message::Text(json));
+                if send_result.is_err() {
+                    leptos::logging::log!("⚠️ [MOUSE] Failed to send cursor position for {}", user);
+                }
             }
+        } else {
+            leptos::logging::log!("⚠️ [MOUSE] No WS sender available");
         }
 
         let throttle_ms = cfg.get_value().theme.mouse_throttle_ms;

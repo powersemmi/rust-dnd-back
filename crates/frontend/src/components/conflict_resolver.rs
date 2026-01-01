@@ -2,7 +2,6 @@ use super::voting::{VotingActive, VotingState};
 use super::websocket::{ConflictType, SyncConflict, WsSender};
 use crate::config::Theme;
 use crate::i18n::i18n::{t_string, use_i18n};
-use leptos::ev::MouseEvent;
 use leptos::prelude::*;
 use shared::events::voting::{VotingOption, VotingStartPayload, VotingType};
 use std::collections::{HashMap, HashSet};
@@ -11,15 +10,16 @@ use std::collections::{HashMap, HashSet};
 pub fn ConflictResolver(
     conflict: RwSignal<Option<SyncConflict>>,
     username: ReadSignal<String>,
-    on_create_voting: impl Fn(VotingStartPayload) + 'static + Copy + Send + Sync,
-    on_submit_vote: impl Fn(String, Vec<String>) + 'static + Copy + Send + Sync,
-    on_change_room: impl Fn(String) + 'static + Copy + Send + Sync,
+    on_create_voting: impl Fn(VotingStartPayload) + 'static + Clone + Send + Sync,
+    on_submit_vote: impl Fn(String, Vec<String>) + 'static + Clone + Send + Sync,
+    on_change_room: impl Fn(String) + 'static + Clone + Send + Sync,
     current_room: ReadSignal<String>,
     votings: RwSignal<HashMap<String, VotingState>>,
     ws_sender: ReadSignal<Option<WsSender>>,
     voted_in: RwSignal<HashSet<String>>,
     selected_options_map: RwSignal<HashMap<String, HashSet<String>>>,
     theme: Theme,
+    on_start_conflict_resolution: impl Fn() + 'static + Clone + Send + Sync,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let new_room_input = RwSignal::new(String::new());
@@ -36,97 +36,11 @@ pub fn ConflictResolver(
         })
     });
 
-    let on_move_to_new_room = move |_: MouseEvent| {
-        let new_room = new_room_input.get();
-        if !new_room.is_empty() {
-            // Сохраняем текущий стейт в localStorage для новой комнаты
-            if let Some(window) = web_sys::window() {
-                if let Ok(Some(storage)) = window.local_storage() {
-                    let old_room = current_room.get();
-                    // Копируем стейт из старой комнаты в новую
-                    if let Ok(Some(old_state_json)) =
-                        storage.get_item(&format!("room_state:{}", old_room))
-                    {
-                        let _ =
-                            storage.set_item(&format!("room_state:{}", new_room), &old_state_json);
-                        // Удаляем стейт старой комнаты
-                        let _ = storage.remove_item(&format!("room_state:{}", old_room));
-                    }
-                }
-            }
-
-            // Очищаем конфликт и переходим в новую комнату
-            conflict.set(None);
-            on_change_room(new_room);
-        }
-    };
-
-    let on_force_sync = move |_: MouseEvent| {
-        // Создаём голосование с таймером 60 секунд
-        let voting_id = format!("conflict_vote_{}", js_sys::Date::now() as u64);
-
-        let payload = VotingStartPayload {
-            voting_id: voting_id.clone(),
-            question: t_string!(i18n, conflict.option_force_sync).to_string(),
-            options: vec![
-                VotingOption {
-                    id: ".0".to_string(),
-                    text: ".0".to_string(), // Will be displayed as "No" in UI
-                },
-                VotingOption {
-                    id: ".1".to_string(),
-                    text: ".1".to_string(), // Will be displayed as "Yes" in UI
-                },
-            ],
-            voting_type: VotingType::SingleChoice,
-            is_anonymous: false,
-            timer_seconds: Some(60),
-            default_option_id: Some(".0".to_string()), // Default to "No"
-            creator: username.get(),
-        };
-
-        on_create_voting(payload);
-
-        // Автоматически голосуем "Да" за инициатора
-        on_submit_vote(voting_id, vec![".1".to_string()]);
-
-        // НЕ закрываем окно конфликта - пусть пользователи проголосуют
-        // Окно останется открытым, пока конфликт не будет разрешён
-    };
-
-    let on_discard = move |_: MouseEvent| {
-        // Очищаем локальный стейт
-        if let Some(window) = web_sys::window() {
-            if let Ok(Some(storage)) = window.local_storage() {
-                let room = current_room.get();
-                let _ = storage.remove_item(&format!("room_state:{}", room));
-                leptos::logging::log!("🗑️ Cleared local state for room: {}", room);
-            }
-        }
-
-        // Создаем специальное голосование для сбора snapshots от всех участников
-        let voting_id = format!("discard_collect_{}", js_sys::Date::now() as u64);
-
-        let payload = VotingStartPayload {
-            voting_id: voting_id.clone(),
-            question: t_string!(i18n, conflict.collecting_versions).to_string(),
-            options: vec![VotingOption {
-                id: ".0".to_string(),
-                text: "Present".to_string(),
-            }],
-            voting_type: VotingType::SingleChoice,
-            is_anonymous: false,     // Нужны имена участников
-            timer_seconds: Some(60), // Минута для сбора
-            default_option_id: Some(".0".to_string()),
-            creator: username.get(),
-        };
-
-        on_create_voting(payload);
-        on_submit_vote(voting_id.clone(), vec![".0".to_string()]);
-
-        leptos::logging::log!("🔄 Discarded local changes, collecting snapshots from all users...");
-        conflict.set(None);
-    };
+    // Store клоны для использования в обработчиках
+    let on_change_room_stored = StoredValue::new(on_change_room);
+    let on_create_voting_stored = StoredValue::new(on_create_voting);
+    let on_submit_vote_stored = StoredValue::new(on_submit_vote);
+    let on_start_conflict_resolution_stored = StoredValue::new(on_start_conflict_resolution);
 
     view! {
         <Show when=move || conflict.get().is_some()>
@@ -215,7 +129,30 @@ pub fn ConflictResolver(
                                             font-size: 0.875rem; margin-bottom: 0.9375rem;",
                                             theme_stored.get_value().ui_button_primary, theme_stored.get_value().ui_text_primary
                                         )
-                                        on:click=on_move_to_new_room
+                                        on:click=move |_| {
+                                            let new_room = new_room_input.get();
+                                            if !new_room.is_empty() {
+                                                // Сохраняем текущий стейт в localStorage для новой комнаты
+                                                if let Some(window) = web_sys::window() {
+                                                    if let Ok(Some(storage)) = window.local_storage() {
+                                                        let old_room = current_room.get();
+                                                        // Копируем стейт из старой комнаты в новую
+                                                        if let Ok(Some(old_state_json)) =
+                                                            storage.get_item(&format!("room_state:{}", old_room))
+                                                        {
+                                                            let _ =
+                                                                storage.set_item(&format!("room_state:{}", new_room), &old_state_json);
+                                                            // Удаляем стейт старой комнаты
+                                                            let _ = storage.remove_item(&format!("room_state:{}", old_room));
+                                                        }
+                                                    }
+                                                }
+
+                                                // Очищаем конфликт и переходим в новую комнату
+                                                conflict.set(None);
+                                                on_change_room_stored.with_value(|f| f.clone()(new_room));
+                                            }
+                                        }
                                     >
                                         {move || t_string!(i18n, conflict.move_button)}
                                     </button>
@@ -231,7 +168,38 @@ pub fn ConflictResolver(
                                             font-size: 0.875rem; margin-bottom: 0.9375rem;",
                                             theme_stored.get_value().ui_text_primary
                                         )
-                                        on:click=on_force_sync
+                                        on:click=move |_| {
+                                            // Создаём голосование с таймером 60 секунд
+                                            let voting_id = format!("conflict_vote_{}", js_sys::Date::now() as u64);
+
+                                            let payload = VotingStartPayload {
+                                                voting_id: voting_id.clone(),
+                                                question: t_string!(i18n, conflict.option_force_sync).to_string(),
+                                                options: vec![
+                                                    VotingOption {
+                                                        id: ".0".to_string(),
+                                                        text: ".0".to_string(), // Will be displayed as "No" in UI
+                                                    },
+                                                    VotingOption {
+                                                        id: ".1".to_string(),
+                                                        text: ".1".to_string(), // Will be displayed as "Yes" in UI
+                                                    },
+                                                ],
+                                                voting_type: VotingType::SingleChoice,
+                                                is_anonymous: false,
+                                                timer_seconds: Some(60),
+                                                default_option_id: Some(".0".to_string()), // Default to "No"
+                                                creator: username.get(),
+                                            };
+
+                                            on_create_voting_stored.with_value(|f| f.clone()(payload));
+
+                                            // Автоматически голосуем "Да" за инициатора
+                                            on_submit_vote_stored.with_value(|f| f.clone()(voting_id, vec![".1".to_string()]));
+
+                                            // НЕ закрываем окно конфликта - пусть пользователи проголосуют
+                                            // Окно останется открытым, пока конфликт не будет разрешён
+                                        }
                                     >
                                         {move || t_string!(i18n, conflict.force_button)}
                                     </button>
@@ -247,7 +215,24 @@ pub fn ConflictResolver(
                                             font-size: 0.875rem;",
                                             theme_stored.get_value().ui_button_danger, theme_stored.get_value().ui_text_primary
                                         )
-                                        on:click=on_discard
+                                        on:click=move |_| {
+                                            // Очищаем локальный стейт
+                                            if let Some(window) = web_sys::window() {
+                                                if let Ok(Some(storage)) = window.local_storage() {
+                                                    let room = current_room.get();
+                                                    let _ = storage.remove_item(&format!("room_state:{}", room));
+                                                    leptos::logging::log!("🗑️ Cleared local state for room: {}", room);
+                                                }
+                                            }
+
+                                            leptos::logging::log!("🔄 Discarded local changes, starting conflict resolution...");
+
+                                            // Закрываем окно конфликта
+                                            conflict.set(None);
+
+                                            // Запускаем процесс разрешения конфликта через сбор анонсов
+                                            on_start_conflict_resolution_stored.with_value(|f| f.clone()());
+                                        }
                                     >
                                         {move || t_string!(i18n, conflict.discard_button)}
                                     </button>
