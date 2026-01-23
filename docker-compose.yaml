@@ -48,8 +48,6 @@ services:
       context: .
       dockerfile: Dockerfile
       target: frontend
-      # Все переменные загружаются из .env.docker внутри Dockerfile
-      # Больше не нужно передавать build args для каждой новой переменной темы
     ports:
       - "8080:80"
     networks:
