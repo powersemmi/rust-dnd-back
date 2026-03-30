@@ -1,6 +1,7 @@
 mod chat;
 mod file;
 mod mouse;
+mod note;
 mod presence;
 mod scene;
 mod sync;
@@ -11,7 +12,9 @@ use crate::components::statistics::StateEvent;
 use crate::components::voting::VotingState;
 use crate::components::websocket::{FileTransferState, WsSender, types::*};
 use leptos::prelude::*;
-use shared::events::{ChatMessagePayload, ClientEvent, RoomState, Scene, VotingResultPayload};
+use shared::events::{
+    ChatMessagePayload, ClientEvent, NotePayload, RoomState, Scene, VotingResultPayload,
+};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -27,6 +30,11 @@ pub struct HandlerContext<'a> {
     pub room_name: &'a str,
     pub set_cursors: WriteSignal<HashMap<String, CursorSignals>>,
     pub messages_signal: RwSignal<Vec<ChatMessagePayload>>,
+    pub public_notes_signal: RwSignal<Vec<NotePayload>>,
+    pub direct_notes_signal: RwSignal<Vec<NotePayload>>,
+    pub direct_note_recipients_signal: RwSignal<Vec<String>>,
+    pub direct_note_recipients_cache_updated_at_ms_signal: RwSignal<Option<f64>>,
+    pub direct_note_recipients_request_id_signal: RwSignal<Option<String>>,
     pub state_events: RwSignal<Vec<StateEvent>>,
     pub scenes_signal: RwSignal<Vec<Scene>>,
     pub active_scene_id_signal: RwSignal<Option<String>>,
@@ -47,6 +55,8 @@ pub struct HandlerContext<'a> {
 pub fn handle_event(event: ClientEvent, ctx: &HandlerContext<'_>) {
     match event {
         ClientEvent::ChatMessage(msg) => chat::handle_chat_message(msg, ctx),
+        ClientEvent::NoteUpsert(payload) => note::handle_note_upsert(payload, ctx),
+        ClientEvent::NoteDelete(payload) => note::handle_note_delete(payload, ctx),
         ClientEvent::FileAnnounce(payload) => {
             file::handle_file_announce(payload, ctx.file_transfer, ctx.my_username, ctx.tx)
         }
@@ -108,6 +118,12 @@ pub fn handle_event(event: ClientEvent, ctx: &HandlerContext<'_>) {
         ClientEvent::PresenceResponse(payload) => presence::handle_presence_response(
             payload,
             ctx.votings,
+            presence::DirectRecipientPresenceSignals {
+                recipients: ctx.direct_note_recipients_signal,
+                cache_updated_at_ms: ctx.direct_note_recipients_cache_updated_at_ms_signal,
+                request_id: ctx.direct_note_recipients_request_id_signal,
+            },
+            ctx.my_username,
             ctx.local_version,
             ctx.state_events,
         ),

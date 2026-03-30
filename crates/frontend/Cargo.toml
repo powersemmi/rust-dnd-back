@@ -12,9 +12,11 @@ shared = { path = "../shared", default-features = false }
 
 leptos = { version = "0.8.15", features = ["csr"] }
 leptos_i18n = { version = "0.6.0-rc.4", features = ["csr"] }
-web-sys = { version = "0.3", features = ["Window", "Storage", "Element", "DomRect", "HtmlElement", "HtmlInputElement", "MouseEvent", "WheelEvent", "Blob", "BlobPropertyBag", "File", "FileList", "Url"] }
+web-sys = { version = "0.3", features = ["Window", "Storage", "Element", "DomRect", "HtmlElement", "HtmlInputElement", "MouseEvent", "WheelEvent", "DragEvent", "DataTransfer", "Blob", "BlobPropertyBag", "File", "FileList", "Url"] }
 
 serde_json = "1.0"
+pulldown-cmark = "0.13.0"
+ammonia = "4.1.2"
 
 gloo-net = "0.6.0"
 gloo-timers = { version = "0.3.0", features = ["futures"] }

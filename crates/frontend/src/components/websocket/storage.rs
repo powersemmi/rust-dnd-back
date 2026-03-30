@@ -3,15 +3,16 @@ use leptos::task::spawn_local;
 use log::warn;
 use rexie::{ObjectStore, Rexie, TransactionMode};
 use serde::{Deserialize, Serialize};
-use shared::events::{FileRef, RoomState};
+use shared::events::{FileRef, NotePayload, RoomState};
 use web_sys::wasm_bindgen::{JsCast, JsValue};
 use web_sys::{Blob, Url};
 
 const DATABASE_NAME: &str = "dnd_vtt";
-const DATABASE_VERSION: u32 = 2;
+const DATABASE_VERSION: u32 = 3;
 const ROOM_STATES_STORE: &str = "room_states";
 const FILES_STORE: &str = "files";
 const TOKEN_LIBRARY_STORE: &str = "token_library";
+const NOTES_STORE: &str = "notes";
 
 type StorageResult<T> = Result<T, String>;
 
@@ -38,12 +39,37 @@ pub struct StoredTokenLibraryItem {
     pub height_cells: u16,
 }
 
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum StoredNoteBucket {
+    Private,
+    Direct,
+}
+
+impl StoredNoteBucket {
+    fn as_key_segment(&self) -> &'static str {
+        match self {
+            StoredNoteBucket::Private => "private",
+            StoredNoteBucket::Direct => "direct",
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub struct StoredNoteRecord {
+    pub key: String,
+    pub room_name: String,
+    pub owner_username: String,
+    pub bucket: StoredNoteBucket,
+    pub note: NotePayload,
+}
+
 async fn open_database() -> StorageResult<Rexie> {
     Rexie::builder(DATABASE_NAME)
         .version(DATABASE_VERSION)
         .add_object_store(ObjectStore::new(ROOM_STATES_STORE).key_path("room_name"))
         .add_object_store(ObjectStore::new(FILES_STORE).key_path("hash"))
         .add_object_store(ObjectStore::new(TOKEN_LIBRARY_STORE).key_path("key"))
+        .add_object_store(ObjectStore::new(NOTES_STORE).key_path("key"))
         .build()
         .await
         .map_err(|error| format!("failed to open IndexedDB: {error:?}"))
@@ -111,6 +137,18 @@ pub async fn save_state(room_name: &str, state: &RoomState) -> StorageResult<()>
 
 pub fn token_library_key(room_name: &str, token_id: &str) -> String {
     format!("{room_name}:{token_id}")
+}
+
+pub fn note_key(
+    room_name: &str,
+    owner_username: &str,
+    bucket: StoredNoteBucket,
+    note_id: &str,
+) -> String {
+    format!(
+        "{room_name}:{owner_username}:{}:{note_id}",
+        bucket.as_key_segment()
+    )
 }
 
 fn sort_token_library_items(items: &mut [StoredTokenLibraryItem]) {
@@ -198,6 +236,127 @@ pub async fn delete_token_library_item(room_name: &str, token_id: &str) -> Stora
         .done()
         .await
         .map_err(|error| format!("token library delete transaction failed: {error:?}"))?;
+
+    Ok(())
+}
+
+fn sort_notes(notes: &mut [NotePayload]) {
+    notes.sort_by(|left, right| {
+        right
+            .updated_at_ms
+            .partial_cmp(&left.updated_at_ms)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+}
+
+pub async fn load_notes(
+    room_name: &str,
+    owner_username: &str,
+    bucket: StoredNoteBucket,
+) -> StorageResult<Vec<NotePayload>> {
+    let database = open_database().await?;
+    let transaction = database
+        .transaction(&[NOTES_STORE], TransactionMode::ReadOnly)
+        .map_err(|error| format!("failed to open notes read transaction: {error:?}"))?;
+    let store = transaction
+        .store(NOTES_STORE)
+        .map_err(|error| format!("failed to open notes store: {error:?}"))?;
+
+    let values = store
+        .get_all(None, None)
+        .await
+        .map_err(|error| format!("failed to read notes from IndexedDB: {error:?}"))?;
+
+    transaction
+        .done()
+        .await
+        .map_err(|error| format!("notes read transaction failed: {error:?}"))?;
+
+    let mut notes = values
+        .into_iter()
+        .map(|value| {
+            serde_wasm_bindgen::from_value::<StoredNoteRecord>(value)
+                .map_err(|error| format!("failed to decode note record: {error}"))
+        })
+        .collect::<StorageResult<Vec<_>>>()?
+        .into_iter()
+        .filter(|record| {
+            record.room_name == room_name
+                && record.owner_username == owner_username
+                && record.bucket == bucket
+        })
+        .map(|record| record.note)
+        .collect::<Vec<_>>();
+    sort_notes(&mut notes);
+    Ok(notes)
+}
+
+pub async fn save_note(
+    room_name: &str,
+    owner_username: &str,
+    bucket: StoredNoteBucket,
+    note: &NotePayload,
+) -> StorageResult<()> {
+    let database = open_database().await?;
+    let transaction = database
+        .transaction(&[NOTES_STORE], TransactionMode::ReadWrite)
+        .map_err(|error| format!("failed to open notes write transaction: {error:?}"))?;
+    let store = transaction
+        .store(NOTES_STORE)
+        .map_err(|error| format!("failed to open notes store: {error:?}"))?;
+
+    let record = StoredNoteRecord {
+        key: note_key(room_name, owner_username, bucket.clone(), &note.id),
+        room_name: room_name.to_string(),
+        owner_username: owner_username.to_string(),
+        bucket,
+        note: note.clone(),
+    };
+    let value = serde_wasm_bindgen::to_value(&record)
+        .map_err(|error| format!("failed to encode note for IndexedDB: {error}"))?;
+
+    store
+        .put(&value, None)
+        .await
+        .map_err(|error| format!("failed to save note to IndexedDB: {error:?}"))?;
+
+    transaction
+        .done()
+        .await
+        .map_err(|error| format!("notes write transaction failed: {error:?}"))?;
+
+    Ok(())
+}
+
+pub async fn delete_note(
+    room_name: &str,
+    owner_username: &str,
+    bucket: StoredNoteBucket,
+    note_id: &str,
+) -> StorageResult<()> {
+    let database = open_database().await?;
+    let transaction = database
+        .transaction(&[NOTES_STORE], TransactionMode::ReadWrite)
+        .map_err(|error| format!("failed to open notes delete transaction: {error:?}"))?;
+    let store = transaction
+        .store(NOTES_STORE)
+        .map_err(|error| format!("failed to open notes store: {error:?}"))?;
+
+    store
+        .delete(JsValue::from_str(&note_key(
+            room_name,
+            owner_username,
+            bucket,
+            note_id,
+        )))
+        .await
+        .map_err(|error| format!("failed to delete note from IndexedDB: {error:?}"))?;
+
+    transaction
+        .done()
+        .await
+        .map_err(|error| format!("notes delete transaction failed: {error:?}"))?;
 
     Ok(())
 }
@@ -419,5 +578,13 @@ mod tests {
 
         assert_eq!(items[0].id, "t1");
         assert_eq!(items[1].id, "t2");
+    }
+
+    #[test]
+    fn note_key_is_namespaced_by_owner_and_bucket() {
+        assert_eq!(
+            note_key("room-a", "gm", StoredNoteBucket::Direct, "note-1"),
+            "room-a:gm:direct:note-1"
+        );
     }
 }

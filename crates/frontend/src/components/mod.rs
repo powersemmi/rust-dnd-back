@@ -5,6 +5,7 @@ pub mod cursor;
 pub mod draggable_window;
 pub mod language_selector;
 pub mod login;
+pub mod notes;
 pub mod register;
 pub mod room_selector;
 pub mod scene_board;

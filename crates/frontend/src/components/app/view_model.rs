@@ -12,6 +12,7 @@ pub struct AppViewModel {
     // Window visibility
     pub is_menu_open: RwSignal<bool>,
     pub is_chat_open: RwSignal<bool>,
+    pub is_notes_open: RwSignal<bool>,
     pub is_scenes_open: RwSignal<bool>,
     pub is_tokens_open: RwSignal<bool>,
     pub is_settings_open: RwSignal<bool>,
@@ -34,6 +35,7 @@ impl AppViewModel {
             app_state: RwSignal::new(initial_state),
             is_menu_open: RwSignal::new(false),
             is_chat_open: RwSignal::new(false),
+            is_notes_open: RwSignal::new(false),
             is_scenes_open: RwSignal::new(false),
             is_tokens_open: RwSignal::new(false),
             is_settings_open: RwSignal::new(false),
@@ -54,6 +56,11 @@ impl AppViewModel {
         self.active_window.set(ActiveWindow::Chat);
         self.has_chat_notification.set(false);
         self.chat_notification_count.set(0);
+    }
+
+    pub fn open_notes(&self) {
+        self.is_notes_open.set(true);
+        self.active_window.set(ActiveWindow::Notes);
     }
 
     pub fn open_scenes(&self) {
@@ -87,6 +94,7 @@ impl AppViewModel {
     pub fn close_active_window(&self) {
         match self.active_window.get_untracked() {
             ActiveWindow::Chat => self.is_chat_open.set(false),
+            ActiveWindow::Notes => self.is_notes_open.set(false),
             ActiveWindow::Scenes => self.is_scenes_open.set(false),
             ActiveWindow::Tokens => self.is_tokens_open.set(false),
             ActiveWindow::Settings => self.is_settings_open.set(false),
@@ -106,6 +114,10 @@ impl AppViewModel {
             }
             "KeyC" => {
                 self.open_chat();
+                true
+            }
+            "KeyN" => {
+                self.open_notes();
                 true
             }
             "KeyG" => {
@@ -209,6 +221,18 @@ mod tests {
             assert!(handled);
             assert!(vm.is_tokens_open.get_untracked());
             assert_eq!(vm.active_window.get_untracked(), ActiveWindow::Tokens);
+        });
+    }
+
+    #[test]
+    fn handle_hotkey_key_n_opens_notes() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let vm = make_vm();
+            let handled = vm.handle_hotkey("KeyN");
+            assert!(handled);
+            assert!(vm.is_notes_open.get_untracked());
+            assert_eq!(vm.active_window.get_untracked(), ActiveWindow::Notes);
         });
     }
 

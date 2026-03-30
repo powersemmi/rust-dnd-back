@@ -11,6 +11,7 @@ const MENU_TOGGLE_FONT_SIZE: &str = "clamp(1rem, 0.95rem + 0.28vw, 1.2rem)";
 pub fn SideMenu(
     #[prop(into)] is_open: RwSignal<bool>,
     on_chat_open: Callback<()>,
+    on_notes_open: Callback<()>,
     on_scenes_open: Callback<()>,
     on_tokens_open: Callback<()>,
     on_settings_open: Callback<()>,
@@ -109,6 +110,38 @@ pub fn SideMenu(
                                     } else {
                                         t_string!(i18n, menu.hotkey_chat).to_string()
                                     }}
+                                </span>
+                            }.into_any()
+                        } else { ().into_any() }}
+                    </button>
+
+                    // Notes button
+                    <button
+                        on:click=move |_| on_notes_open.run(())
+                        style=format!(
+                            "padding: 0.75rem; background: {}; color: {}; border: none; border-radius: 0.3125rem; \
+                             cursor: pointer; display: flex; justify-content: space-between; align-items: center; \
+                             transition: background 0.2s; min-width: 0; font-size: {};",
+                            button_bg, theme.ui_text_primary, MENU_BUTTON_FONT_SIZE
+                        )
+                        onmouseover=format!("this.style.background='{}'", button_hover)
+                        onmouseout=format!("this.style.background='{}'", button_bg)
+                    >
+                        <span style=move || if vm.is_open.get() {
+                            "white-space: nowrap;".to_string()
+                        } else {
+                            "white-space: nowrap; overflow: hidden; text-overflow: ellipsis;".to_string()
+                        }>
+                            {"📝 "}
+                            {move || if vm.is_open.get() { t_string!(i18n, menu.notes) } else { "" }}
+                        </span>
+                        {move || if !vm.is_open.get() {
+                            view! {
+                                <span style=format!(
+                                    "color: {}; font-size: {}; margin-left: 0.5rem;",
+                                    theme.ui_text_secondary, MENU_META_FONT_SIZE
+                                )>
+                                    {t_string!(i18n, menu.hotkey_notes)}
                                 </span>
                             }.into_any()
                         } else { ().into_any() }}

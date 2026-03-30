@@ -1,6 +1,7 @@
 pub mod chat;
 pub mod file;
 pub mod mouse;
+pub mod note;
 pub mod params;
 pub mod room;
 pub mod scene;
@@ -12,6 +13,9 @@ pub use crate::events::file::{
     FileAbortPayload, FileAnnouncePayload, FileChunkPayload, FileRequestPayload,
 };
 pub use crate::events::mouse::MouseClickPayload;
+pub use crate::events::note::{
+    NoteBoardPosition, NoteBoardStyle, NoteDeletePayload, NotePayload, NoteVisibility,
+};
 pub use crate::events::params::Params;
 pub use crate::events::room::RoomState;
 pub use crate::events::scene::{
@@ -41,6 +45,10 @@ pub enum ClientEvent {
     MouseClickPayload(MouseClickPayload),
     #[serde(rename = "CHAT_MESSAGE")]
     ChatMessage(ChatMessagePayload),
+    #[serde(rename = "NOTE_UPSERT")]
+    NoteUpsert(NotePayload),
+    #[serde(rename = "NOTE_DELETE")]
+    NoteDelete(NoteDeletePayload),
     #[serde(rename = "FILE_ANNOUNCE")]
     FileAnnounce(FileAnnouncePayload),
     #[serde(rename = "FILE_REQUEST")]
@@ -99,6 +107,8 @@ impl ClientEvent {
             ClientEvent::RoomState(p) => p.validate(),
             ClientEvent::MouseClickPayload(p) => p.validate(),
             ClientEvent::ChatMessage(p) => p.validate(),
+            ClientEvent::NoteUpsert(p) => p.validate(),
+            ClientEvent::NoteDelete(p) => p.validate(),
             ClientEvent::FileAnnounce(p) => p.validate(),
             ClientEvent::FileRequest(p) => p.validate(),
             ClientEvent::FileChunk(p) => p.validate(),

@@ -10,7 +10,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use rand::seq::IndexedRandom;
 use shared::events::{
-    ChatMessagePayload, ClientEvent, RoomState, Scene, SyncSnapshotRequestPayload,
+    ChatMessagePayload, ClientEvent, NotePayload, RoomState, Scene, SyncSnapshotRequestPayload,
     VotingResultPayload,
 };
 use std::cell::RefCell;
@@ -90,6 +90,8 @@ impl WsSender {
             | ClientEvent::SyncSnapshot(_) => OutboundPriority::High,
             ClientEvent::FileChunk(_) => OutboundPriority::Low,
             ClientEvent::RoomState(_)
+            | ClientEvent::NoteUpsert(_)
+            | ClientEvent::NoteDelete(_)
             | ClientEvent::FileAnnounce(_)
             | ClientEvent::FileRequest(_)
             | ClientEvent::FileAbort(_)
@@ -118,6 +120,11 @@ pub struct ConnectWebSocketArgs {
     pub set_ws_sender: WriteSignal<Option<WsSender>>,
     pub set_cursors: WriteSignal<HashMap<String, CursorSignals>>,
     pub messages_signal: RwSignal<Vec<ChatMessagePayload>>,
+    pub public_notes_signal: RwSignal<Vec<NotePayload>>,
+    pub direct_notes_signal: RwSignal<Vec<NotePayload>>,
+    pub direct_note_recipients_signal: RwSignal<Vec<String>>,
+    pub direct_note_recipients_cache_updated_at_ms_signal: RwSignal<Option<f64>>,
+    pub direct_note_recipients_request_id_signal: RwSignal<Option<String>>,
     pub state_events: RwSignal<Vec<StateEvent>>,
     pub scenes_signal: RwSignal<Vec<Scene>>,
     pub active_scene_id_signal: RwSignal<Option<String>>,
@@ -143,6 +150,11 @@ struct MessageProcessingContext {
     room_name: String,
     set_cursors: WriteSignal<HashMap<String, CursorSignals>>,
     messages_signal: RwSignal<Vec<ChatMessagePayload>>,
+    public_notes_signal: RwSignal<Vec<NotePayload>>,
+    direct_notes_signal: RwSignal<Vec<NotePayload>>,
+    direct_note_recipients_signal: RwSignal<Vec<String>>,
+    direct_note_recipients_cache_updated_at_ms_signal: RwSignal<Option<f64>>,
+    direct_note_recipients_request_id_signal: RwSignal<Option<String>>,
     state_events: RwSignal<Vec<StateEvent>>,
     scenes_signal: RwSignal<Vec<Scene>>,
     active_scene_id_signal: RwSignal<Option<String>>,
@@ -173,6 +185,12 @@ impl MessageProcessingContext {
             room_name: &self.room_name,
             set_cursors: self.set_cursors,
             messages_signal: self.messages_signal,
+            public_notes_signal: self.public_notes_signal,
+            direct_notes_signal: self.direct_notes_signal,
+            direct_note_recipients_signal: self.direct_note_recipients_signal,
+            direct_note_recipients_cache_updated_at_ms_signal: self
+                .direct_note_recipients_cache_updated_at_ms_signal,
+            direct_note_recipients_request_id_signal: self.direct_note_recipients_request_id_signal,
             state_events: self.state_events,
             scenes_signal: self.scenes_signal,
             active_scene_id_signal: self.active_scene_id_signal,
@@ -201,6 +219,11 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
         set_ws_sender,
         set_cursors,
         messages_signal,
+        public_notes_signal,
+        direct_notes_signal,
+        direct_note_recipients_signal,
+        direct_note_recipients_cache_updated_at_ms_signal,
+        direct_note_recipients_request_id_signal,
         state_events,
         scenes_signal,
         active_scene_id_signal,
@@ -245,6 +268,7 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
                 *last_synced_version.borrow_mut() = data.state.version;
                 *room_state.borrow_mut() = data.state.clone();
                 messages_signal.set(data.state.chat_history.clone());
+                public_notes_signal.set(data.state.public_notes.clone());
                 file_transfer.reconcile_chat_attachments(&data.state.chat_history);
                 voting_results.set(data.state.voting_results.clone());
                 scenes_signal.set(data.state.scenes.clone());
@@ -271,9 +295,41 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
                 let collected_announces_cb = collected_announces.clone();
                 let is_collecting_announces_cb = is_collecting_announces.clone();
                 let expected_snapshot_from_cb = expected_snapshot_from.clone();
+                let room_state_for_callback = room_state.clone();
+                let local_version_for_callback = local_version.clone();
+                let last_synced_version_for_callback = last_synced_version.clone();
+                let messages_signal_for_callback = messages_signal;
+                let public_notes_signal_for_callback = public_notes_signal;
+                let scenes_signal_for_callback = scenes_signal;
+                let active_scene_id_signal_for_callback = active_scene_id_signal;
+                let voting_results_for_callback = voting_results;
+                let conflict_signal_for_callback = conflict_signal;
+                let state_events_for_callback = state_events;
+                let room_name_for_callback = room_name.clone();
+                let file_transfer_for_callback = file_transfer.clone();
 
                 conflict_resolution_handle.set_callback(move || {
                     use crate::components::websocket::handlers::sync_discard;
+                    *room_state_for_callback.borrow_mut() = RoomState::default();
+                    *local_version_for_callback.borrow_mut() = 0;
+                    *last_synced_version_for_callback.borrow_mut() = 0;
+                    messages_signal_for_callback.set(Vec::new());
+                    public_notes_signal_for_callback.set(Vec::new());
+                    scenes_signal_for_callback.set(Vec::new());
+                    active_scene_id_signal_for_callback.set(None);
+                    voting_results_for_callback.set(HashMap::new());
+                    conflict_signal_for_callback.set(None);
+                    file_transfer_for_callback.reset();
+                    storage::save_state_in_background(
+                        &room_name_for_callback,
+                        &RoomState::default(),
+                    );
+                    super::utils::log_event(
+                        state_events_for_callback,
+                        0,
+                        "LOCAL_STATE_RESET",
+                        "Cleared runtime room state before resync",
+                    );
                     sync_discard::start_conflict_resolution(
                         sync_discard::ConflictResolutionContext {
                             tx: &tx_for_callback,
@@ -317,6 +373,11 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
                         room_name: room_name_clone,
                         set_cursors,
                         messages_signal,
+                        public_notes_signal,
+                        direct_notes_signal,
+                        direct_note_recipients_signal,
+                        direct_note_recipients_cache_updated_at_ms_signal,
+                        direct_note_recipients_request_id_signal,
                         state_events,
                         scenes_signal,
                         active_scene_id_signal,

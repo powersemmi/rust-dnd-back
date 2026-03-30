@@ -271,6 +271,8 @@ pub fn handle_snapshot(payload: SyncSnapshotPayload, ctx: &HandlerContext<'_>) {
         *ctx.room_state.borrow_mut() = payload.state.clone();
 
         ctx.messages_signal.set(payload.state.chat_history.clone());
+        ctx.public_notes_signal
+            .set(payload.state.public_notes.clone());
         ctx.file_transfer
             .reconcile_chat_attachments(&payload.state.chat_history);
         ctx.voting_results.set(payload.state.voting_results.clone());
@@ -306,6 +308,8 @@ pub fn handle_snapshot(payload: SyncSnapshotPayload, ctx: &HandlerContext<'_>) {
         *ctx.room_state.borrow_mut() = payload.state.clone();
 
         ctx.messages_signal.set(payload.state.chat_history.clone());
+        ctx.public_notes_signal
+            .set(payload.state.public_notes.clone());
         ctx.file_transfer
             .reconcile_chat_attachments(&payload.state.chat_history);
         ctx.voting_results.set(payload.state.voting_results.clone());
@@ -367,6 +371,8 @@ pub fn handle_snapshot(payload: SyncSnapshotPayload, ctx: &HandlerContext<'_>) {
             *ctx.room_state.borrow_mut() = payload.state.clone();
 
             ctx.messages_signal.set(payload.state.chat_history.clone());
+            ctx.public_notes_signal
+                .set(payload.state.public_notes.clone());
             ctx.file_transfer
                 .reconcile_chat_attachments(&payload.state.chat_history);
             ctx.voting_results.set(payload.state.voting_results.clone());

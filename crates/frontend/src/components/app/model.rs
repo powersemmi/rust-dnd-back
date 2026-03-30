@@ -3,6 +3,7 @@
 pub enum ActiveWindow {
     None,
     Chat,
+    Notes,
     Scenes,
     Tokens,
     Settings,

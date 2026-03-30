@@ -2,6 +2,7 @@ use super::super::chat::ChatWindow;
 use super::super::conflict_resolver::ConflictResolver;
 use super::super::language_selector::LanguageSelector;
 use super::super::login::LoginForm;
+use super::super::notes::NotesWindow;
 use super::super::register::RegisterForm;
 use super::super::room_selector::RoomSelector;
 use super::super::scene_board::SceneBoard;
@@ -14,8 +15,8 @@ use super::super::side_menu::SideMenu;
 use super::super::statistics::StatisticsWindow;
 use super::super::tokens::TokensWindow;
 use super::super::websocket::{
-    ConflictResolutionHandle, CursorSignals, FileTransferState, StoredTokenLibraryItem,
-    SyncConflict, WsSender,
+    ConflictResolutionHandle, CursorSignals, FileTransferState, StoredNoteBucket,
+    StoredTokenLibraryItem, SyncConflict, WsSender, delete_state, load_notes,
 };
 use super::model::ActiveWindow;
 use super::navigation::create_room_selected_callback;
@@ -27,8 +28,9 @@ use crate::config;
 use crate::i18n::i18n::{I18nContextProvider, Locale};
 use crate::utils::{auth, token_refresh};
 use leptos::prelude::*;
+use leptos::task::spawn_local;
 use leptos::wasm_bindgen::JsCast;
-use shared::events::{ChatMessagePayload, Scene};
+use shared::events::{ChatMessagePayload, NotePayload, Scene};
 use std::collections::HashMap;
 
 #[component]
@@ -59,6 +61,12 @@ pub fn App() -> impl IntoView {
 
     let (cursors, set_cursors) = signal(HashMap::<String, CursorSignals>::new());
     let messages = RwSignal::new(Vec::<ChatMessagePayload>::new());
+    let public_notes = RwSignal::new(Vec::<NotePayload>::new());
+    let private_notes = RwSignal::new(Vec::<NotePayload>::new());
+    let direct_notes = RwSignal::new(Vec::<NotePayload>::new());
+    let direct_note_recipients = RwSignal::new(Vec::<String>::new());
+    let direct_note_recipients_cache_updated_at_ms = RwSignal::new(Option::<f64>::None);
+    let direct_note_recipients_request_id = RwSignal::new(Option::<String>::None);
     let state_events = RwSignal::new(Vec::<StateEvent>::new());
     let scenes = RwSignal::new(Vec::<Scene>::new());
     let active_scene_id = RwSignal::new(Option::<String>::None);
@@ -79,6 +87,31 @@ pub fn App() -> impl IntoView {
     let (ws_sender, set_ws_sender) = signal::<Option<WsSender>>(None);
     let file_transfer = FileTransferState::new();
     let conflict_resolution_handle = ConflictResolutionHandle::new();
+
+    let clear_room_local_state = {
+        let handle = conflict_resolution_handle.clone();
+        Callback::new(move |_| {
+            let current_room = room_id.get_untracked();
+            if current_room.is_empty() {
+                return;
+            }
+            let handle = handle.clone();
+            spawn_local(async move {
+                match delete_state(&current_room).await {
+                    Ok(()) => leptos::logging::log!(
+                        "Cleared local IndexedDB room state for '{}'",
+                        current_room
+                    ),
+                    Err(error) => leptos::logging::log!(
+                        "Failed to clear local IndexedDB room state for '{}': {}",
+                        current_room,
+                        error
+                    ),
+                }
+                handle.invoke();
+            });
+        })
+    };
 
     // Load persisted token on initial RoomSelection state
     if initial_state == AppState::RoomSelection {
@@ -118,6 +151,11 @@ pub fn App() -> impl IntoView {
             set_ws_sender,
             set_cursors,
             messages,
+            public_notes,
+            direct_notes,
+            direct_note_recipients,
+            direct_note_recipients_cache_updated_at_ms,
+            direct_note_recipients_request_id,
             state_events,
             scenes,
             active_scene_id,
@@ -157,6 +195,37 @@ pub fn App() -> impl IntoView {
         let _ = room_id.get();
         token_library_items.set(Vec::new());
         dragging_library_token_id.set(None);
+        public_notes.set(Vec::new());
+        private_notes.set(Vec::new());
+        direct_notes.set(Vec::new());
+        direct_note_recipients.set(Vec::new());
+        direct_note_recipients_cache_updated_at_ms.set(None);
+        direct_note_recipients_request_id.set(None);
+    });
+
+    Effect::new(move |_| {
+        if vm.app_state.get() != AppState::Connected {
+            return;
+        }
+
+        let current_room = room_id.get();
+        let current_user = username.get();
+        if current_room.is_empty() || current_user.is_empty() {
+            return;
+        }
+
+        spawn_local(async move {
+            if let Ok(notes) =
+                load_notes(&current_room, &current_user, StoredNoteBucket::Private).await
+            {
+                private_notes.set(notes);
+            }
+            if let Ok(notes) =
+                load_notes(&current_room, &current_user, StoredNoteBucket::Direct).await
+            {
+                direct_notes.set(notes);
+            }
+        });
     });
 
     Effect::new(move |_| {
@@ -245,6 +314,9 @@ pub fn App() -> impl IntoView {
                                 room_id=room_id
                                 scenes=scenes
                                 active_scene_id=active_scene_id
+                                public_notes=public_notes
+                                private_notes=private_notes
+                                direct_notes=direct_notes
                                 show_workspace_hint=show_workspace_hint
                                 show_inactive_scene_contents=show_inactive_scene_contents
                                 token_library_items=token_library_items
@@ -265,6 +337,7 @@ pub fn App() -> impl IntoView {
                             <SideMenu
                                 is_open=vm.is_menu_open
                                 on_chat_open=Callback::new(move |_| vm.open_chat())
+                                on_notes_open=Callback::new(move |_| vm.open_notes())
                                 on_scenes_open=Callback::new(move |_| vm.open_scenes())
                                 on_tokens_open=Callback::new(move |_| vm.open_tokens())
                                 on_settings_open=Callback::new(move |_| vm.open_settings())
@@ -288,10 +361,28 @@ pub fn App() -> impl IntoView {
                                 theme=theme.get_value()
                             />
 
+                            <NotesWindow
+                                is_open=vm.is_notes_open
+                                room_id=room_id
+                                username=username
+                                ws_sender=ws_sender
+                                public_notes=public_notes
+                                private_notes=private_notes
+                                direct_notes=direct_notes
+                                direct_note_recipients=direct_note_recipients
+                                direct_note_recipients_cache_updated_at_ms=direct_note_recipients_cache_updated_at_ms
+                                direct_note_recipients_request_id=direct_note_recipients_request_id
+                                is_active=Signal::derive(move || vm.active_window.get() == ActiveWindow::Notes)
+                                on_focus=Callback::new(move |_| vm.active_window.set(ActiveWindow::Notes))
+                                theme=theme.get_value()
+                            />
+
                             <Settings
                                 is_open=vm.is_settings_open
                                 show_workspace_hint=show_workspace_hint
                                 show_inactive_scene_contents=show_inactive_scene_contents
+                                on_clear_room_local_state=clear_room_local_state
+                                current_room=room_id
                                 theme=theme.get_value()
                             />
 

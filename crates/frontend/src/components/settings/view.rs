@@ -8,6 +8,8 @@ pub fn Settings(
     #[prop(into)] is_open: RwSignal<bool>,
     #[prop(into)] show_workspace_hint: RwSignal<bool>,
     #[prop(into)] show_inactive_scene_contents: RwSignal<bool>,
+    on_clear_room_local_state: Callback<()>,
+    current_room: ReadSignal<String>,
     theme: Theme,
 ) -> impl IntoView {
     let i18n = use_i18n();
@@ -97,6 +99,30 @@ pub fn Settings(
                                 </span>
                             </span>
                         </label>
+
+                        <div style=format!(
+                            "display: flex; flex-direction: column; gap: 0.55rem; padding: 0.9rem 1rem; \
+                             border-radius: 0.625rem; background: {}; color: {};",
+                            theme.ui_bg_secondary, theme.ui_text_primary
+                        )>
+                            <span>{t!(i18n, settings.clear_room_local_state)}</span>
+                            <span style=format!("color: {}; font-size: 0.82rem; line-height: 1.45;", theme.ui_text_secondary)>
+                                {t!(i18n, settings.clear_room_local_state_hint)}
+                            </span>
+                            <button
+                                on:click=move |_| on_clear_room_local_state.run(())
+                                prop:disabled=move || current_room.get().is_empty()
+                                style=move || format!(
+                                    "padding: 0.75rem; background: rgba(220,38,38,0.14); color: {}; border: none; \
+                                     border-radius: 0.3125rem; font-size: 1rem; cursor: {}; font-weight: 700; opacity: {};",
+                                    theme.ui_button_danger,
+                                    if current_room.get().is_empty() { "not-allowed" } else { "pointer" },
+                                    if current_room.get().is_empty() { "0.55" } else { "1" },
+                                )
+                            >
+                                {t!(i18n, settings.clear_room_local_state_button)}
+                            </button>
+                        </div>
 
                         <button
                             on:click=move |_| vm.close()

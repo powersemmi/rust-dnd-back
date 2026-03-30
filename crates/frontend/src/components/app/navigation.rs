@@ -7,7 +7,7 @@ use crate::components::websocket::{
 use crate::config;
 use crate::utils::{auth, token_refresh};
 use leptos::prelude::*;
-use shared::events::{ChatMessagePayload, Scene, voting::VotingResultPayload};
+use shared::events::{ChatMessagePayload, NotePayload, Scene, voting::VotingResultPayload};
 use std::collections::HashMap;
 
 use super::AppState;
@@ -63,6 +63,11 @@ pub struct RoomSelectedCallbackArgs {
     pub set_ws_sender: WriteSignal<Option<WsSender>>,
     pub set_cursors: WriteSignal<HashMap<String, CursorSignals>>,
     pub messages: RwSignal<Vec<ChatMessagePayload>>,
+    pub public_notes: RwSignal<Vec<NotePayload>>,
+    pub direct_notes: RwSignal<Vec<NotePayload>>,
+    pub direct_note_recipients: RwSignal<Vec<String>>,
+    pub direct_note_recipients_cache_updated_at_ms: RwSignal<Option<f64>>,
+    pub direct_note_recipients_request_id: RwSignal<Option<String>>,
     pub state_events: RwSignal<Vec<StateEvent>>,
     pub scenes: RwSignal<Vec<Scene>>,
     pub active_scene_id: RwSignal<Option<String>>,
@@ -88,6 +93,11 @@ pub fn create_room_selected_callback(args: RoomSelectedCallbackArgs) -> impl Fn(
         set_ws_sender,
         set_cursors,
         messages,
+        public_notes,
+        direct_notes,
+        direct_note_recipients,
+        direct_note_recipients_cache_updated_at_ms,
+        direct_note_recipients_request_id,
         state_events,
         scenes,
         active_scene_id,
@@ -116,6 +126,12 @@ pub fn create_room_selected_callback(args: RoomSelectedCallbackArgs) -> impl Fn(
             set_ws_sender,
             set_cursors,
             messages_signal: messages,
+            public_notes_signal: public_notes,
+            direct_notes_signal: direct_notes,
+            direct_note_recipients_signal: direct_note_recipients,
+            direct_note_recipients_cache_updated_at_ms_signal:
+                direct_note_recipients_cache_updated_at_ms,
+            direct_note_recipients_request_id_signal: direct_note_recipients_request_id,
             state_events,
             scenes_signal: scenes,
             active_scene_id_signal: active_scene_id,

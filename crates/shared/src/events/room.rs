@@ -1,4 +1,5 @@
 use crate::events::chat::ChatMessagePayload;
+use crate::events::note::NotePayload;
 use crate::events::scene::Scene;
 use crate::events::voting::VotingResultPayload;
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,10 @@ pub struct RoomState {
     /// Результаты завершенных голосований (voting_id -> результаты)
     #[serde(default)]
     pub voting_results: HashMap<String, VotingResultPayload>,
+
+    /// Публичные заметки комнаты
+    #[serde(default)]
+    pub public_notes: Vec<NotePayload>,
 
     /// Список сцен комнаты
     #[serde(default)]
@@ -47,6 +52,7 @@ impl Default for RoomState {
         let mut state = Self {
             chat_history: Vec::new(),
             voting_results: HashMap::new(),
+            public_notes: Vec::new(),
             scenes: Vec::new(),
             active_scene_id: None,
             version: 0,
@@ -72,6 +78,10 @@ impl RoomState {
         // Хешируем результаты голосований
         if let Ok(voting_json) = serde_json::to_string(&self.voting_results) {
             hasher.update(voting_json.as_bytes());
+        }
+
+        if let Ok(notes_json) = serde_json::to_string(&self.public_notes) {
+            hasher.update(notes_json.as_bytes());
         }
 
         if let Ok(scenes_json) = serde_json::to_string(&self.scenes) {
