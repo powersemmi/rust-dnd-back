@@ -4,6 +4,9 @@ use leptos::ev;
 use leptos::prelude::*;
 use leptos::web_sys::MouseEvent;
 
+const WINDOW_TITLE_FONT_SIZE: &str = "clamp(1rem, 0.94rem + 0.22vw, 1.15rem)";
+const WINDOW_CLOSE_FONT_SIZE: &str = "clamp(1rem, 0.95rem + 0.25vw, 1.2rem)";
+
 /// A draggable, resizable floating window.
 ///
 /// Drag by the header. Resize via the bottom-right corner handle.
@@ -80,8 +83,8 @@ pub fn DraggableWindow(
                 let opacity = if is_active.get() { "1" } else { "0.7" };
                 format!(
                     "position: fixed; left: {}px; top: {}px; width: {}px; height: {}px; \
-                     background: {}; border: 0.0625rem solid {}; border-radius: 0.5rem; \
-                     box-shadow: 0 0.25rem 1.25rem rgba(0,0,0,0.5); z-index: 1001; \
+                     background: {}; border: 0.0625rem solid {}; border-radius: 0.75rem; \
+                     box-shadow: 0 0.5rem 2rem rgba(0,0,0,0.38); z-index: 1001; \
                      display: {}; flex-direction: column; overflow: hidden; \
                      opacity: {}; transition: opacity 0.2s;",
                     vm.pos_x.get(),
@@ -99,22 +102,25 @@ pub fn DraggableWindow(
             <div
                 on:mousedown=on_header_mouse_down
                 style=format!(
-                    "padding: 0.75rem 0.9375rem; background: {}; border-bottom: 0.0625rem solid {}; \
+                    "padding: 0.875rem 1rem; background: {}; border-bottom: 0.0625rem solid {}; \
                      cursor: move; display: flex; justify-content: space-between; \
                      align-items: center; user-select: none;",
                     theme.ui_bg_secondary, theme.ui_border
                 )
             >
-                <h3 style=format!("margin: 0; color: {}; font-size: 1rem;", theme.ui_text_primary)>
+                <h3 style=format!(
+                    "margin: 0; color: {}; font-size: {}; line-height: 1.2;",
+                    theme.ui_text_primary, WINDOW_TITLE_FONT_SIZE
+                )>
                     {move || title.get()}
                 </h3>
                 <button
                     on:click=move |_| is_open.set(false)
                     style=format!(
-                        "background: {}; border: none; color: {}; padding: 0.25rem 0.625rem; \
-                         border-radius: 0.25rem; cursor: pointer; font-size: 1.125rem; \
+                        "background: {}; border: none; color: {}; padding: 0.375rem 0.75rem; \
+                         border-radius: 0.5rem; cursor: pointer; font-size: {}; \
                          font-weight: bold; line-height: 1;",
-                        theme.ui_button_danger, theme.ui_text_primary
+                        theme.ui_button_danger, theme.ui_text_primary, WINDOW_CLOSE_FONT_SIZE
                     )
                 >
                     "x"

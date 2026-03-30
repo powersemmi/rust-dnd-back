@@ -13,6 +13,7 @@ pub mod settings;
 pub mod side_menu;
 pub mod statistics;
 pub mod tab_bar;
+pub mod tokens;
 pub mod voting;
 pub mod websocket;
 

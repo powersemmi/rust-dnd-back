@@ -6,11 +6,16 @@ use super::super::register::RegisterForm;
 use super::super::room_selector::RoomSelector;
 use super::super::scene_board::SceneBoard;
 use super::super::scenes::ScenesWindow;
-use super::super::settings::Settings;
+use super::super::settings::{
+    Settings, load_inactive_scene_contents_visibility, load_workspace_hint_visibility,
+    save_inactive_scene_contents_visibility, save_workspace_hint_visibility,
+};
 use super::super::side_menu::SideMenu;
 use super::super::statistics::StatisticsWindow;
+use super::super::tokens::TokensWindow;
 use super::super::websocket::{
-    ConflictResolutionHandle, CursorSignals, FileTransferState, SyncConflict, WsSender,
+    ConflictResolutionHandle, CursorSignals, FileTransferState, StoredTokenLibraryItem,
+    SyncConflict, WsSender,
 };
 use super::model::ActiveWindow;
 use super::navigation::create_room_selected_callback;
@@ -57,6 +62,11 @@ pub fn App() -> impl IntoView {
     let state_events = RwSignal::new(Vec::<StateEvent>::new());
     let scenes = RwSignal::new(Vec::<Scene>::new());
     let active_scene_id = RwSignal::new(Option::<String>::None);
+    let token_library_items = RwSignal::new(Vec::<StoredTokenLibraryItem>::new());
+    let dragging_library_token_id = RwSignal::new(Option::<String>::None);
+    let show_workspace_hint = RwSignal::new(load_workspace_hint_visibility().unwrap_or(true));
+    let show_inactive_scene_contents =
+        RwSignal::new(load_inactive_scene_contents_visibility().unwrap_or(false));
     let voting_results =
         RwSignal::new(HashMap::<String, shared::events::voting::VotingResultPayload>::new());
     let conflict_signal = RwSignal::new(Option::<SyncConflict>::None);
@@ -143,6 +153,20 @@ pub fn App() -> impl IntoView {
         });
     }
 
+    Effect::new(move |_| {
+        let _ = room_id.get();
+        token_library_items.set(Vec::new());
+        dragging_library_token_id.set(None);
+    });
+
+    Effect::new(move |_| {
+        save_workspace_hint_visibility(show_workspace_hint.get());
+    });
+
+    Effect::new(move |_| {
+        save_inactive_scene_contents_visibility(show_inactive_scene_contents.get());
+    });
+
     // Keyboard shortcut handler - delegates to ViewModel
     let on_keydown = move |ev: web_sys::KeyboardEvent| {
         if vm.app_state.get() != AppState::Connected {
@@ -218,8 +242,13 @@ pub fn App() -> impl IntoView {
                     AppState::Connected => view! {
                         <div style="width: 100%; height: 100%; position: relative;">
                             <SceneBoard
+                                room_id=room_id
                                 scenes=scenes
                                 active_scene_id=active_scene_id
+                                show_workspace_hint=show_workspace_hint
+                                show_inactive_scene_contents=show_inactive_scene_contents
+                                token_library_items=token_library_items
+                                dragging_library_token_id=dragging_library_token_id
                                 cursors=cursors
                                 set_cursors=set_cursors
                                 file_transfer=file_transfer.clone()
@@ -237,6 +266,7 @@ pub fn App() -> impl IntoView {
                                 is_open=vm.is_menu_open
                                 on_chat_open=Callback::new(move |_| vm.open_chat())
                                 on_scenes_open=Callback::new(move |_| vm.open_scenes())
+                                on_tokens_open=Callback::new(move |_| vm.open_tokens())
                                 on_settings_open=Callback::new(move |_| vm.open_settings())
                                 on_statistics_open=Callback::new(move |_| vm.open_statistics())
                                 on_voting_open=Callback::new(move |_| vm.open_voting())
@@ -250,6 +280,7 @@ pub fn App() -> impl IntoView {
                             <ChatWindow
                                 is_open=vm.is_chat_open
                                 messages=messages
+                                file_transfer=file_transfer.clone()
                                 ws_sender=ws_sender
                                 username=username
                                 is_active=Signal::derive(move || vm.active_window.get() == ActiveWindow::Chat)
@@ -257,7 +288,12 @@ pub fn App() -> impl IntoView {
                                 theme=theme.get_value()
                             />
 
-                            <Settings is_open=vm.is_settings_open theme=theme.get_value() />
+                            <Settings
+                                is_open=vm.is_settings_open
+                                show_workspace_hint=show_workspace_hint
+                                show_inactive_scene_contents=show_inactive_scene_contents
+                                theme=theme.get_value()
+                            />
 
                             <ScenesWindow
                                 is_open=vm.is_scenes_open
@@ -268,6 +304,21 @@ pub fn App() -> impl IntoView {
                                 username=username
                                 is_active=Signal::derive(move || vm.active_window.get() == ActiveWindow::Scenes)
                                 on_focus=Callback::new(move |_| vm.active_window.set(ActiveWindow::Scenes))
+                                theme=theme.get_value()
+                            />
+
+                            <TokensWindow
+                                is_open=vm.is_tokens_open
+                                room_id=room_id
+                                items=token_library_items
+                                file_transfer=file_transfer.clone()
+                                ws_sender=ws_sender
+                                username=username
+                                on_start_drag=Callback::new(move |item: StoredTokenLibraryItem| {
+                                    dragging_library_token_id.set(Some(item.id));
+                                })
+                                is_active=Signal::derive(move || vm.active_window.get() == ActiveWindow::Tokens)
+                                on_focus=Callback::new(move |_| vm.active_window.set(ActiveWindow::Tokens))
                                 theme=theme.get_value()
                             />
 

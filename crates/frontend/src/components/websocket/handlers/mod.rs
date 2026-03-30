@@ -71,6 +71,7 @@ pub fn handle_event(event: ClientEvent, ctx: &HandlerContext<'_>) {
         ClientEvent::SceneUpdate(payload) => scene::handle_scene_update(payload, ctx),
         ClientEvent::SceneDelete(payload) => scene::handle_scene_delete(payload, ctx),
         ClientEvent::SceneActivate(payload) => scene::handle_scene_activate(payload, ctx),
+        ClientEvent::TokenMove(payload) => scene::handle_token_move(payload, ctx),
         ClientEvent::MouseClickPayload(mouse_event) => {
             mouse::handle_mouse_event(mouse_event, ctx.my_username, ctx.set_cursors)
         }

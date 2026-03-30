@@ -49,6 +49,8 @@ pub fn handle_hash_selection_voting_result(payload: VotingResultPayload, ctx: &H
                 *ctx.room_state.borrow_mut() = chosen_state.clone();
 
                 ctx.messages_signal.set(chosen_state.chat_history.clone());
+                ctx.file_transfer
+                    .reconcile_chat_attachments(&chosen_state.chat_history);
                 ctx.scenes_signal.set(chosen_state.scenes.clone());
                 ctx.active_scene_id_signal
                     .set(chosen_state.active_scene_id.clone());

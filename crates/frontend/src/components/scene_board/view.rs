@@ -1,20 +1,33 @@
 use super::model::{
     BOARD_HANDLE_GAP_PX, BOARD_HANDLE_HEIGHT_PX, BOARD_HANDLE_MAX_WIDTH_PX, DRAG_EPSILON_PX,
-    SNAP_THRESHOLD_PX, WORKSPACE_GRID_STEP_PX, ZOOM_STEP, board_background, board_metrics,
-    clamp_zoom, grid_line_width_screen, point_inside_rect, selection_box, world_to_screen,
+    SNAP_THRESHOLD_PX, WORKSPACE_GRID_STEP_PX, ZOOM_STEP, board_background, centered_token_offset,
+    clamp_token_position, clamp_zoom, grid_line_width_screen, point_inside_rect,
+    scene_allows_token_interaction, scene_shows_contents, selection_box, should_broadcast_cursor,
+    snap_token_position_to_grid, token_position_from_world, token_rect, workspace_board_metrics,
+    world_to_screen,
 };
+use super::storage::{StoredCameraPosition, load_camera_position, save_camera_position};
+use super::token_editor::{SceneTokenEditor, SceneTokenEditorDraft, SceneTokenEditorValue};
+use super::token_layer::SceneTokenLayer;
+use super::token_menu::SceneTokenMenu;
 use super::view_model::SceneBoardViewModel;
+use super::workspace_hint::WorkspaceHintCard;
 use crate::components::app::mouse_handler::{
     send_mouse_event_throttled, update_local_cursor_world,
 };
 use crate::components::cursor::Cursor;
-use crate::components::websocket::{CursorSignals, FileTransferState, WsSender};
+use crate::components::websocket::{
+    CursorSignals, FileTransferState, StoredTokenLibraryItem, WsSender, save_token_library_item,
+    token_library_key,
+};
 use crate::config;
 use crate::config::Theme;
 use leptos::ev;
 use leptos::html;
 use leptos::prelude::*;
-use shared::events::{ClientEvent, Scene, SceneUpdatePayload};
+use leptos::task::spawn_local;
+use shared::events::{ClientEvent, Scene, SceneUpdatePayload, Token, TokenMovePayload};
+use uuid::Uuid;
 use web_sys::{MouseEvent, WheelEvent};
 
 // ---------------------------------------------------------------------------
@@ -28,6 +41,18 @@ struct SceneLayout {
     board_width: f64,
     board_height: f64,
 }
+
+#[derive(Clone)]
+struct TokenMenuState {
+    scene_id: String,
+    token_id: String,
+    token: Token,
+    token_name: String,
+    screen_x: f64,
+    screen_y: f64,
+}
+
+const TOKEN_DRAG_EPSILON_CELLS: f32 = 0.02;
 
 impl SceneLayout {
     fn center_x(&self) -> f64 {
@@ -89,13 +114,13 @@ fn viewport_local_point(
     Some((x, y))
 }
 
-fn build_scene_layouts(scenes: &[Scene], vw: f64, vh: f64) -> Vec<SceneLayout> {
+fn build_scene_layouts(scenes: &[Scene]) -> Vec<SceneLayout> {
     scenes
         .iter()
         .cloned()
         .map(|scene| {
             let (cell_size, board_width, board_height) =
-                board_metrics(scene.grid.columns, scene.grid.rows, vw, vh);
+                workspace_board_metrics(scene.grid.columns, scene.grid.rows);
             SceneLayout {
                 scene,
                 cell_size,
@@ -126,6 +151,27 @@ fn point_inside_handle(layout: &SceneLayout, wx: f64, wy: f64) -> bool {
         layout.handle_width(),
         BOARD_HANDLE_HEIGHT_PX,
     )
+}
+
+fn token_hit(layout: &SceneLayout, wx: f64, wy: f64) -> Option<Token> {
+    layout
+        .scene
+        .tokens
+        .iter()
+        .rev()
+        .find(|token| {
+            let (left, top, width, height) = token_rect(
+                layout.left(),
+                layout.top(),
+                layout.cell_size,
+                token.x,
+                token.y,
+                token.width_cells,
+                token.height_cells,
+            );
+            point_inside_rect(wx, wy, left, top, width, height)
+        })
+        .cloned()
 }
 
 fn clamp_to_layout(wx: f64, wy: f64, layout: &SceneLayout) -> (f64, f64) {
@@ -197,6 +243,112 @@ fn update_scene_position(scenes: RwSignal<Vec<Scene>>, id: &str, x: f64, y: f64)
     });
 }
 
+fn update_token_position(scenes: RwSignal<Vec<Scene>>, id: &str, x: f32, y: f32) {
+    scenes.update(|items| {
+        for scene in items {
+            if let Some(token) = scene.tokens.iter_mut().find(|token| token.id == id) {
+                token.x = x;
+                token.y = y;
+                break;
+            }
+        }
+    });
+}
+
+fn place_library_token(
+    scenes: RwSignal<Vec<Scene>>,
+    scene_id: &str,
+    token: &StoredTokenLibraryItem,
+    x: f32,
+    y: f32,
+) -> Option<Scene> {
+    let mut updated_scene = None::<Scene>;
+
+    scenes.update(|items| {
+        let Some(scene) = items.iter_mut().find(|scene| scene.id == scene_id) else {
+            return;
+        };
+
+        scene.tokens.push(Token {
+            id: Uuid::new_v4().to_string(),
+            name: token.name.clone(),
+            image: token.image.clone(),
+            x,
+            y,
+            width_cells: token.width_cells,
+            height_cells: token.height_cells,
+        });
+        updated_scene = Some(scene.clone());
+    });
+
+    updated_scene
+}
+
+fn remove_token_from_scene(
+    scenes: RwSignal<Vec<Scene>>,
+    scene_id: &str,
+    token_id: &str,
+) -> Option<Scene> {
+    let mut updated_scene = None::<Scene>;
+
+    scenes.update(|items| {
+        let Some(scene) = items.iter_mut().find(|scene| scene.id == scene_id) else {
+            return;
+        };
+
+        let original_len = scene.tokens.len();
+        scene.tokens.retain(|token| token.id != token_id);
+        if scene.tokens.len() != original_len {
+            updated_scene = Some(scene.clone());
+        }
+    });
+
+    updated_scene
+}
+
+fn update_token_details(
+    scenes: RwSignal<Vec<Scene>>,
+    scene_id: &str,
+    token_id: &str,
+    name: &str,
+    width_cells: u16,
+    height_cells: u16,
+) -> Option<Scene> {
+    let mut updated_scene = None::<Scene>;
+
+    scenes.update(|items| {
+        let Some(scene) = items.iter_mut().find(|scene| scene.id == scene_id) else {
+            return;
+        };
+
+        let columns = scene.grid.columns;
+        let rows = scene.grid.rows;
+        let Some(token) = scene.tokens.iter_mut().find(|token| token.id == token_id) else {
+            return;
+        };
+
+        token.name = name.to_string();
+        token.width_cells = width_cells;
+        token.height_cells = height_cells;
+        let (x, y) =
+            clamp_token_position(token.x, token.y, columns, rows, width_cells, height_cells);
+        token.x = x;
+        token.y = y;
+        updated_scene = Some(scene.clone());
+    });
+
+    updated_scene
+}
+
+fn sort_token_library_items(items: &mut [StoredTokenLibraryItem]) {
+    items.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| left.id.cmp(&right.id))
+    });
+}
+
 fn send_event(ws_sender: &ReadSignal<Option<WsSender>>, event: ClientEvent) {
     if let Some(sender) = ws_sender.get_untracked() {
         let _ = sender.try_send_event(event);
@@ -209,8 +361,13 @@ fn send_event(ws_sender: &ReadSignal<Option<WsSender>>, event: ClientEvent) {
 
 #[component]
 pub fn SceneBoard(
+    room_id: ReadSignal<String>,
     #[prop(into)] scenes: RwSignal<Vec<Scene>>,
     #[prop(into)] active_scene_id: RwSignal<Option<String>>,
+    #[prop(into)] show_workspace_hint: RwSignal<bool>,
+    #[prop(into)] show_inactive_scene_contents: RwSignal<bool>,
+    #[prop(into)] token_library_items: RwSignal<Vec<StoredTokenLibraryItem>>,
+    #[prop(into)] dragging_library_token_id: RwSignal<Option<String>>,
     cursors: ReadSignal<std::collections::HashMap<String, CursorSignals>>,
     set_cursors: WriteSignal<std::collections::HashMap<String, CursorSignals>>,
     file_transfer: FileTransferState,
@@ -220,10 +377,56 @@ pub fn SceneBoard(
     theme: Theme,
 ) -> impl IntoView {
     let (initial_vw, initial_vh) = viewport_size();
-    let vm = SceneBoardViewModel::new(initial_vw, initial_vh);
+    let initial_room_id = room_id.get_untracked();
+    let initial_camera = load_camera_position(&initial_room_id).unwrap_or(StoredCameraPosition {
+        x: 0.0,
+        y: 0.0,
+        zoom: 1.0,
+    });
+    let vm = SceneBoardViewModel::new(
+        initial_vw,
+        initial_vh,
+        initial_camera.x,
+        initial_camera.y,
+        clamp_zoom(initial_camera.zoom),
+    );
     let viewport_ref = NodeRef::<html::Div>::new();
     let config = StoredValue::new(config);
     let drag_did_move = RwSignal::new(false);
+    let token_drag_did_move = RwSignal::new(false);
+    let loaded_room_id = RwSignal::new(initial_room_id);
+    let token_menu = RwSignal::new(None::<TokenMenuState>);
+    let token_editor = RwSignal::new(None::<SceneTokenEditorDraft>);
+
+    Effect::new(move |_| {
+        let current_room_id = room_id.get();
+        let camera = load_camera_position(&current_room_id).unwrap_or(StoredCameraPosition {
+            x: 0.0,
+            y: 0.0,
+            zoom: 1.0,
+        });
+        vm.set_view_transform(camera.x, camera.y, clamp_zoom(camera.zoom));
+        loaded_room_id.set(current_room_id);
+        token_menu.set(None);
+        token_editor.set(None);
+    });
+
+    {
+        Effect::new(move |_| {
+            let current_room_id = room_id.get();
+            if current_room_id.is_empty() || loaded_room_id.get() != current_room_id {
+                return;
+            }
+            save_camera_position(
+                &current_room_id,
+                StoredCameraPosition {
+                    x: vm.camera_x.get(),
+                    y: vm.camera_y.get(),
+                    zoom: vm.zoom.get(),
+                },
+            );
+        });
+    }
 
     // Global event listeners
     Effect::new(move |_| {
@@ -240,6 +443,7 @@ pub fn SceneBoard(
                 return;
             };
 
+            vm.update_pointer(local_x, local_y);
             vm.update_pan(local_x, local_y);
 
             let (world_x, world_y) = super::model::screen_to_world(
@@ -252,19 +456,29 @@ pub fn SceneBoard(
                 vm.zoom.get(),
             );
 
+            let layouts = build_scene_layouts(&scenes.get_untracked());
+            let hovered_scene_id = layouts
+                .iter()
+                .rev()
+                .find(|layout| point_inside_board(layout, world_x, world_y))
+                .map(|layout| layout.scene.id.as_str());
             let current_user = username.get_untracked();
             update_local_cursor_world(&current_user, world_x, world_y, set_cursors);
-            send_mouse_event_throttled(world_x, world_y, current_user, ws_sender, config);
+            if should_broadcast_cursor(
+                hovered_scene_id,
+                active_scene_id.get_untracked().as_deref(),
+                show_inactive_scene_contents.get_untracked(),
+            ) {
+                send_mouse_event_throttled(world_x, world_y, current_user, ws_sender, config);
+            }
 
             if let Some(scene_id) = vm.dragging_scene_id.get() {
-                let candidate_x = vm.drag_origin_scene_x() + (world_x - vm.drag_start_world_x());
-                let candidate_y = vm.drag_origin_scene_y() + (world_y - vm.drag_start_world_y());
+                let Some((_, candidate_x, candidate_y)) =
+                    vm.compute_scene_drag_position(world_x, world_y)
+                else {
+                    return;
+                };
 
-                let layouts = build_scene_layouts(
-                    &scenes.get_untracked(),
-                    vm.viewport_width.get_untracked(),
-                    vm.viewport_height.get_untracked(),
-                );
                 let Some(dragged_layout) = layouts.iter().find(|l| l.scene.id == scene_id).cloned()
                 else {
                     return;
@@ -290,12 +504,47 @@ pub fn SceneBoard(
                 return;
             }
 
-            if vm.is_selecting.get_untracked() {
-                let layouts = build_scene_layouts(
-                    &scenes.get_untracked(),
-                    vm.viewport_width.get_untracked(),
-                    vm.viewport_height.get_untracked(),
+            if let Some(token_id) = vm.dragging_token_id.get() {
+                let Some(token_layout) = layouts
+                    .iter()
+                    .find(|layout| layout.scene.tokens.iter().any(|token| token.id == token_id))
+                else {
+                    return;
+                };
+
+                let (mut token_x, mut token_y) = token_position_from_world(
+                    world_x,
+                    world_y,
+                    token_layout.left(),
+                    token_layout.top(),
+                    token_layout.cell_size,
+                    token_layout.scene.grid.columns,
+                    token_layout.scene.grid.rows,
+                    vm.token_drag_width_cells(),
+                    vm.token_drag_height_cells(),
+                    vm.token_drag_offset_x(),
+                    vm.token_drag_offset_y(),
                 );
+                if !event.ctrl_key() {
+                    (token_x, token_y) = snap_token_position_to_grid(
+                        token_x,
+                        token_y,
+                        token_layout.scene.grid.columns,
+                        token_layout.scene.grid.rows,
+                        vm.token_drag_width_cells(),
+                        vm.token_drag_height_cells(),
+                    );
+                }
+
+                update_token_position(scenes, &token_id, token_x, token_y);
+                token_drag_did_move.set(
+                    (token_x - vm.token_drag_origin_x()).abs() > TOKEN_DRAG_EPSILON_CELLS
+                        || (token_y - vm.token_drag_origin_y()).abs() > TOKEN_DRAG_EPSILON_CELLS,
+                );
+                return;
+            }
+
+            if vm.is_selecting.get_untracked() {
                 let Some(active_layout) = layouts.iter().find(|l| {
                     Some(l.scene.id.as_str()) == active_scene_id.get_untracked().as_deref()
                 }) else {
@@ -307,7 +556,10 @@ pub fn SceneBoard(
             }
         });
 
-        let mouse_up_handle = window_event_listener(ev::mouseup, move |_: MouseEvent| {
+        let mouse_up_handle = window_event_listener(ev::mouseup, move |event: MouseEvent| {
+            let local_point =
+                viewport_local_point(&viewport_ref, event.client_x(), event.client_y());
+
             if let Some(scene_id) = vm.dragging_scene_id.get_untracked()
                 && drag_did_move.get_untracked()
                 && let Some(scene) = scenes
@@ -324,8 +576,123 @@ pub fn SceneBoard(
                 );
             }
 
+            if let Some(token_id) = vm.dragging_token_id.get_untracked() {
+                if token_drag_did_move.get_untracked() {
+                    if let Some(token) = scenes
+                        .get_untracked()
+                        .iter()
+                        .flat_map(|scene| scene.tokens.iter())
+                        .find(|token| token.id == token_id)
+                        .cloned()
+                    {
+                        send_event(
+                            &ws_sender,
+                            ClientEvent::TokenMove(TokenMovePayload {
+                                token_id,
+                                x: token.x,
+                                y: token.y,
+                                actor: username.get_untracked(),
+                            }),
+                        );
+                    }
+                } else if let Some((local_x, local_y)) = local_point
+                    && let Some((scene_id, token)) =
+                        scenes.get_untracked().iter().find_map(|scene| {
+                            scene
+                                .tokens
+                                .iter()
+                                .find(|token| token.id == token_id)
+                                .map(|token| (scene.id.clone(), token.clone()))
+                        })
+                {
+                    token_menu.set(Some(TokenMenuState {
+                        scene_id,
+                        token_id,
+                        token_name: token.name.clone(),
+                        token,
+                        screen_x: local_x + 14.0,
+                        screen_y: local_y + 14.0,
+                    }));
+                }
+            }
+
+            if let Some(library_token_id) = dragging_library_token_id.get_untracked()
+                && let Some(item) = token_library_items
+                    .get_untracked()
+                    .into_iter()
+                    .find(|item| item.id == library_token_id)
+            {
+                let layouts = build_scene_layouts(&scenes.get_untracked());
+                let (world_x, world_y) = super::model::screen_to_world(
+                    vm.pointer_local_x.get_untracked(),
+                    vm.pointer_local_y.get_untracked(),
+                    vm.viewport_width.get_untracked(),
+                    vm.viewport_height.get_untracked(),
+                    vm.camera_x.get_untracked(),
+                    vm.camera_y.get_untracked(),
+                    vm.zoom.get_untracked(),
+                );
+                let active_id = active_scene_id.get_untracked();
+                let allow_inactive = show_inactive_scene_contents.get_untracked();
+                if let Some(target_layout) = layouts.iter().rev().find(|layout| {
+                    point_inside_board(layout, world_x, world_y)
+                        && scene_allows_token_interaction(
+                            layout.scene.id.as_str(),
+                            active_id.as_deref(),
+                            allow_inactive,
+                        )
+                }) {
+                    let (offset_x, offset_y) = centered_token_offset(
+                        target_layout.cell_size,
+                        item.width_cells,
+                        item.height_cells,
+                    );
+                    let (mut token_x, mut token_y) = token_position_from_world(
+                        world_x,
+                        world_y,
+                        target_layout.left(),
+                        target_layout.top(),
+                        target_layout.cell_size,
+                        target_layout.scene.grid.columns,
+                        target_layout.scene.grid.rows,
+                        item.width_cells,
+                        item.height_cells,
+                        offset_x,
+                        offset_y,
+                    );
+                    if !event.ctrl_key() {
+                        (token_x, token_y) = snap_token_position_to_grid(
+                            token_x,
+                            token_y,
+                            target_layout.scene.grid.columns,
+                            target_layout.scene.grid.rows,
+                            item.width_cells,
+                            item.height_cells,
+                        );
+                    }
+                    if let Some(scene) = place_library_token(
+                        scenes,
+                        &target_layout.scene.id,
+                        &item,
+                        token_x,
+                        token_y,
+                    ) {
+                        send_event(
+                            &ws_sender,
+                            ClientEvent::SceneUpdate(SceneUpdatePayload {
+                                scene,
+                                actor: username.get_untracked(),
+                            }),
+                        );
+                    }
+                }
+            }
+
             vm.end_scene_drag();
+            vm.end_token_drag();
+            dragging_library_token_id.set(None);
             drag_did_move.set(false);
+            token_drag_did_move.set(false);
             vm.end_pan();
             vm.is_selecting.set(false);
         });
@@ -341,17 +708,22 @@ pub fn SceneBoard(
     Effect::new(move |_| {
         let _ = active_scene_id.get();
         vm.is_selecting.set(false);
+        vm.end_token_drag();
+        dragging_library_token_id.set(None);
+        token_menu.set(None);
+        token_editor.set(None);
     });
 
     view! {
         {move || {
             let active_id = active_scene_id.get();
+            let show_inactive_contents = show_inactive_scene_contents.get();
             let scene_items = scenes.get();
             if scene_items.is_empty() {
                 return ().into_any();
             }
 
-            let mut layouts = build_scene_layouts(&scene_items, vm.viewport_width.get(), vm.viewport_height.get());
+            let mut layouts = build_scene_layouts(&scene_items);
             layouts.sort_by_key(|layout| {
                 let is_dragging = vm.dragging_scene_id.get().as_deref() == Some(layout.scene.id.as_str());
                 let is_active = active_id.as_deref() == Some(layout.scene.id.as_str());
@@ -377,6 +749,10 @@ pub fn SceneBoard(
                 zoom
             );
             let cursor_theme = theme.clone();
+            let token_menu_theme = theme.clone();
+            let token_editor_theme = theme.clone();
+            let workspace_hint_theme = theme.clone();
+            let file_urls = file_transfer.file_urls.get();
 
             let selection_overlay = if vm.is_selecting.get() {
                 let (ssx, ssy) = world_to_screen(
@@ -399,6 +775,8 @@ pub fn SceneBoard(
                         let Some((local_x, local_y)) =
                             viewport_local_point(&viewport_ref, event.client_x(), event.client_y())
                         else { return; };
+                        vm.update_pointer(local_x, local_y);
+                        token_menu.set(None);
 
                         match event.button() {
                             // Middle-click pan
@@ -406,6 +784,8 @@ pub fn SceneBoard(
                                 event.prevent_default();
                                 vm.is_selecting.set(false);
                                 vm.end_scene_drag();
+                                vm.end_token_drag();
+                                dragging_library_token_id.set(None);
                                 vm.start_pan(local_x, local_y);
                             }
                             // Left-click: drag handle or start selection
@@ -415,11 +795,7 @@ pub fn SceneBoard(
                                     vm.viewport_width.get(), vm.viewport_height.get(),
                                     vm.camera_x.get(), vm.camera_y.get(), vm.zoom.get(),
                                 );
-                                let layouts = build_scene_layouts(
-                                    &scenes.get_untracked(),
-                                    vm.viewport_width.get_untracked(),
-                                    vm.viewport_height.get_untracked(),
-                                );
+                                let layouts = build_scene_layouts(&scenes.get_untracked());
                                 let mut ordered = layouts;
                                 ordered.sort_by_key(|l| {
                                     active_scene_id.get_untracked().as_deref() == Some(l.scene.id.as_str())
@@ -445,11 +821,50 @@ pub fn SceneBoard(
                                     event.prevent_default();
                                     let is_active = active_scene_id.get_untracked().as_deref()
                                         == Some(layout.scene.id.as_str());
-                                    if !is_active { return; }
+                                    let can_interact = scene_allows_token_interaction(
+                                        layout.scene.id.as_str(),
+                                        active_scene_id.get_untracked().as_deref(),
+                                        show_inactive_scene_contents.get_untracked(),
+                                    );
+
+                                    if let Some(token) = token_hit(layout, world_x, world_y) {
+                                        if !can_interact {
+                                            return;
+                                        }
+                                        let (token_left, token_top, _, _) = token_rect(
+                                            layout.left(),
+                                            layout.top(),
+                                            layout.cell_size,
+                                            token.x,
+                                            token.y,
+                                            token.width_cells,
+                                            token.height_cells,
+                                        );
+                                        vm.is_selecting.set(false);
+                                        vm.end_scene_drag();
+                                        dragging_library_token_id.set(None);
+                                        vm.start_token_drag(
+                                            token.id.clone(),
+                                            token.width_cells,
+                                            token.height_cells,
+                                            world_x - token_left,
+                                            world_y - token_top,
+                                            token.x,
+                                            token.y,
+                                        );
+                                        token_drag_did_move.set(false);
+                                        return;
+                                    }
+
+                                    if !is_active {
+                                        return;
+                                    }
 
                                     let (cx, cy) = clamp_to_layout(world_x, world_y, layout);
                                     vm.is_selecting.set(true);
                                     vm.end_scene_drag();
+                                    vm.end_token_drag();
+                                    dragging_library_token_id.set(None);
                                     vm.selection_start_x.set(cx);
                                     vm.selection_start_y.set(cy);
                                     vm.selection_end_x.set(cx);
@@ -489,6 +904,8 @@ pub fn SceneBoard(
                          pointer-events: auto; user-select: none; cursor: {}; background: {};",
                         if vm.is_panning.get() { "grabbing" }
                         else if vm.dragging_scene_id.get().is_some() { "move" }
+                        else if vm.dragging_token_id.get().is_some() { "grabbing" }
+                        else if dragging_library_token_id.get().is_some() { "copy" }
                         else if vm.is_selecting.get() { "crosshair" }
                         else { "grab" },
                         theme.background_color
@@ -525,11 +942,16 @@ pub fn SceneBoard(
                         {layouts.into_iter().map(|layout| {
                             let is_active = active_id.as_deref() == Some(layout.scene.id.as_str());
                             let is_dragging = vm.dragging_scene_id.get().as_deref() == Some(layout.scene.id.as_str());
+                            let show_scene_contents = scene_shows_contents(
+                                layout.scene.id.as_str(),
+                                active_id.as_deref(),
+                                show_inactive_contents,
+                            );
                             let board_bg = board_background(theme.ui_bg_primary);
                             let board_border = if is_active { theme.ui_success } else { theme.ui_border };
                             let handle_background = if is_active { "rgba(0,0,0,0.56)" } else { "rgba(0,0,0,0.42)" };
-                            let blur_filter = if is_active { "none" } else { "blur(6px) saturate(0.72) brightness(0.7)" };
-                            let board_opacity = if is_active { 1.0 } else { 0.78_f64 };
+                            let blur_filter = if show_scene_contents { "none" } else { "blur(6px) saturate(0.72) brightness(0.7)" };
+                            let board_opacity = if show_scene_contents { 1.0 } else { 0.78_f64 };
                             let z_index = if is_dragging { 4 } else if is_active { 3 } else { 2 };
                             let screen_cell = (layout.cell_size * zoom).max(1.0);
                             let line_width = grid_line_width_screen(screen_cell) / zoom.max(f64::EPSILON);
@@ -538,7 +960,7 @@ pub fn SceneBoard(
                             let major_stroke = if is_active { "rgba(255,255,255,0.06)" } else { "rgba(255,255,255,0.04)" };
                             let background_image = layout.scene.background.as_ref().and_then(|file| {
                                 if file.mime_type.starts_with("image/") {
-                                    file_transfer.file_urls.get().get(&file.hash).cloned()
+                                    file_urls.get(&file.hash).cloned()
                                 } else {
                                     None
                                 }
@@ -551,27 +973,50 @@ pub fn SceneBoard(
                                         "position: absolute; left: {:.2}px; top: {:.2}px; width: {:.2}px; height: {:.2}px; \
                                          z-index: {}; padding: 0.55rem 0.85rem; background: {}; border: 1px solid {}; \
                                          border-radius: 999px; box-shadow: 0 12px 30px rgba(0,0,0,0.24); color: {}; \
-                                         display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; \
+                                         display: flex; flex-direction: column; justify-content: center; gap: 0.15rem; \
                                          cursor: move; filter: {}; opacity: {:.3};",
                                         layout.handle_left(), layout.handle_top(),
                                         layout.handle_width(), BOARD_HANDLE_HEIGHT_PX,
                                         z_index, handle_background, board_border,
                                         theme.ui_text_primary, blur_filter, board_opacity
                                     )>
-                                        <div style="display: flex; gap: 0.65rem; align-items: center; min-width: 0;">
-                                            <span style="font-size: 0.82rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                                                {layout.scene.name.clone()}
-                                            </span>
-                                            <span style=format!("font-size: 0.74rem; color: {}; white-space: nowrap;", theme.ui_text_secondary)>
-                                                {format!("{} x {}", layout.scene.grid.columns, layout.scene.grid.rows)}
+                                        <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; min-width: 0;">
+                                            <div style="display: flex; gap: 0.65rem; align-items: center; min-width: 0;">
+                                                <span style="font-size: 0.82rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                                                    {layout.scene.name.clone()}
+                                                </span>
+                                                <span style=format!("font-size: 0.74rem; color: {}; white-space: nowrap;", theme.ui_text_secondary)>
+                                                    {format!("{} x {}", layout.scene.grid.columns, layout.scene.grid.rows)}
+                                                </span>
+                                            </div>
+                                            <span style=format!(
+                                                "font-size: 0.72rem; color: {}; white-space: nowrap;",
+                                                if is_active { theme.ui_success } else { theme.ui_text_secondary }
+                                            )>
+                                                {if is_active { "ACTIVE" } else { "MOVE" }}
                                             </span>
                                         </div>
-                                        <span style=format!(
-                                            "font-size: 0.72rem; color: {}; white-space: nowrap;",
-                                            if is_active { theme.ui_success } else { theme.ui_text_secondary }
+                                        <div style=format!(
+                                            "font-size: 0.69rem; color: {}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;",
+                                            theme.ui_text_secondary
                                         )>
-                                            {if is_active { "ACTIVE" } else { "MOVE" }}
-                                        </span>
+                                            {if show_scene_contents {
+                                                format!(
+                                                    "Field: {:.0} x {:.0} ft | {} ft/cell | {} tokens",
+                                                    f64::from(layout.scene.grid.columns) * f64::from(layout.scene.grid.cell_size_feet),
+                                                    f64::from(layout.scene.grid.rows) * f64::from(layout.scene.grid.cell_size_feet),
+                                                    layout.scene.grid.cell_size_feet,
+                                                    layout.scene.tokens.len()
+                                                )
+                                            } else {
+                                                format!(
+                                                    "Field: {:.0} x {:.0} ft | {} ft/cell",
+                                                    f64::from(layout.scene.grid.columns) * f64::from(layout.scene.grid.cell_size_feet),
+                                                    f64::from(layout.scene.grid.rows) * f64::from(layout.scene.grid.cell_size_feet),
+                                                    layout.scene.grid.cell_size_feet
+                                                )
+                                            }}
+                                        </div>
                                     </div>
 
                                     // Board tile
@@ -603,7 +1048,7 @@ pub fn SceneBoard(
                                             }.into_any(),
                                             None => ().into_any(),
                                         }}
-                                        {if is_active {
+                                        {if show_scene_contents {
                                             view! {
                                                 <svg
                                                     viewBox=format!("0 0 {:.4} {:.4}", layout.board_width, layout.board_height)
@@ -659,20 +1104,14 @@ pub fn SceneBoard(
                                                 </svg>
                                             }.into_any()
                                         } else { ().into_any() }}
+                                        <SceneTokenLayer
+                                            tokens=if show_scene_contents { layout.scene.tokens.clone() } else { Vec::new() }
+                                            cell_size=layout.cell_size
+                                            dragging_token_id=vm.dragging_token_id.get()
+                                            file_urls=file_urls.clone()
+                                            theme=theme.clone()
+                                        />
                                         <div style="position: absolute; inset: 0; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);" />
-                                        <div style=format!(
-                                            "position: absolute; left: 1rem; bottom: 1rem; padding: 0.45rem 0.7rem; \
-                                             background: rgba(0,0,0,0.42); border: 1px solid {}; border-radius: 0.75rem; \
-                                             color: {}; font-size: 0.78rem; backdrop-filter: blur(6px);",
-                                            theme.ui_border, theme.ui_text_secondary
-                                        )>
-                                            {format!(
-                                                "Field: {:.0} x {:.0} ft | {} ft/cell",
-                                                f64::from(layout.scene.grid.columns) * f64::from(layout.scene.grid.cell_size_feet),
-                                                f64::from(layout.scene.grid.rows) * f64::from(layout.scene.grid.cell_size_feet),
-                                                layout.scene.grid.cell_size_feet
-                                            )}
-                                        </div>
                                     </div>
                                 </>
                             }
@@ -694,6 +1133,103 @@ pub fn SceneBoard(
                             ().into_any()
                         }
                     }}
+
+                    {move || {
+                        token_menu.get().map(|menu| {
+                            let menu_for_save = menu.clone();
+                            let menu_for_delete = menu.clone();
+                            let menu_theme = token_menu_theme.clone();
+                            view! {
+                                <SceneTokenMenu
+                                    token_name=menu.token_name
+                                    screen_x=menu.screen_x
+                                    screen_y=menu.screen_y
+                                    on_edit=Callback::new(move |_| {
+                                        token_editor.set(Some(SceneTokenEditorDraft {
+                                            scene_id: menu.scene_id.clone(),
+                                            token_id: menu.token_id.clone(),
+                                            name: menu.token.name.clone(),
+                                            width_cells: menu.token.width_cells.to_string(),
+                                            height_cells: menu.token.height_cells.to_string(),
+                                        }));
+                                        token_menu.set(None);
+                                    })
+                                    on_save_to_library=Callback::new(move |_| {
+                                        let current_room_id = room_id.get_untracked();
+                                        if current_room_id.is_empty() {
+                                            token_menu.set(None);
+                                            return;
+                                        }
+
+                                        let item = StoredTokenLibraryItem {
+                                            key: token_library_key(&current_room_id, &menu_for_save.token.id),
+                                            room_name: current_room_id,
+                                            id: menu_for_save.token.id.clone(),
+                                            name: menu_for_save.token.name.clone(),
+                                            image: menu_for_save.token.image.clone(),
+                                            width_cells: menu_for_save.token.width_cells,
+                                            height_cells: menu_for_save.token.height_cells,
+                                        };
+                                        spawn_local(async move {
+                                            if save_token_library_item(&item).await.is_ok() {
+                                                token_library_items.update(|items| {
+                                                    match items.iter_mut().find(|existing| existing.id == item.id) {
+                                                        Some(existing) => *existing = item.clone(),
+                                                        None => items.push(item.clone()),
+                                                    }
+                                                    sort_token_library_items(items);
+                                                });
+                                            }
+                                        });
+                                        token_menu.set(None);
+                                    })
+                                    on_delete=Callback::new(move |_| {
+                                        if let Some(scene) = remove_token_from_scene(
+                                            scenes,
+                                            &menu_for_delete.scene_id,
+                                            &menu_for_delete.token_id,
+                                        ) {
+                                            send_event(
+                                                &ws_sender,
+                                                ClientEvent::SceneUpdate(SceneUpdatePayload {
+                                                    scene,
+                                                    actor: username.get_untracked(),
+                                                }),
+                                            );
+                                        }
+                                        token_menu.set(None);
+                                    })
+                                    on_close=Callback::new(move |_| token_menu.set(None))
+                                    theme=menu_theme
+                                />
+                            }.into_any()
+                        }).unwrap_or_else(|| ().into_any())
+                    }}
+
+                    <SceneTokenEditor
+                        draft=token_editor
+                        on_save=Callback::new(move |value: SceneTokenEditorValue| {
+                            if let Some(scene) = update_token_details(
+                                scenes,
+                                &value.scene_id,
+                                &value.token_id,
+                                &value.name,
+                                value.width_cells,
+                                value.height_cells,
+                            ) {
+                                send_event(
+                                    &ws_sender,
+                                    ClientEvent::SceneUpdate(SceneUpdatePayload {
+                                        scene,
+                                        actor: username.get_untracked(),
+                                    }),
+                                );
+                            }
+                            token_editor.set(None);
+                        })
+                        on_close=Callback::new(move |_| token_editor.set(None))
+                        theme=token_editor_theme
+                    />
 
                     // Cursor overlays
                     <For
@@ -766,21 +1302,14 @@ pub fn SceneBoard(
                         </div>
                     </div>
 
-                    // Bottom info bar
-                    <div style=format!(
-                        "position: absolute; right: 1rem; bottom: 1rem; display: flex; gap: 0.75rem; \
-                         align-items: center; padding: 0.55rem 0.75rem; background: rgba(0,0,0,0.38); \
-                         border: 1px solid {}; border-radius: 0.75rem; color: {}; font-size: 0.78rem; \
-                         backdrop-filter: blur(8px); z-index: 6; flex-wrap: wrap; \
-                         justify-content: flex-end; max-width: min(90vw, 56rem);",
-                        theme.ui_border, theme.ui_text_secondary
-                    )>
-                        <span>{move || format!("Zoom: {}%", (vm.zoom.get() * 100.0).round() as i32)}</span>
-                        <span>"MMB drag: camera"</span>
-                        <span>"LMB on board: activate/select"</span>
-                        <span>"Drag board header: move + snap"</span>
-                        <span>"Inactive boards are blurred"</span>
-                    </div>
+                    <Show when=move || show_workspace_hint.get()>
+                        <WorkspaceHintCard
+                            zoom_percent=Signal::derive(move || (vm.zoom.get() * 100.0).round() as i32)
+                            on_close=Callback::new(move |_| show_workspace_hint.set(false))
+                            theme=workspace_hint_theme.clone()
+                        />
+                    </Show>
+
                 </div>
             }.into_any()
         }}

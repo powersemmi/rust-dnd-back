@@ -9,6 +9,18 @@ pub fn handle_chat_message(msg: ChatMessagePayload, ctx: &HandlerContext<'_>) {
     log!("Processing ChatMessage from {}", msg.username);
 
     let is_from_me = msg.username == ctx.my_username;
+    ctx.file_transfer
+        .reconcile_chat_attachments(std::slice::from_ref(&msg));
+
+    if !is_from_me {
+        for attachment in &msg.attachments {
+            ctx.file_transfer.request_file(
+                attachment.clone(),
+                ctx.my_username.to_string(),
+                Some(ctx.tx.clone()),
+            );
+        }
+    }
 
     // Если сообщение не от текущего пользователя, увеличиваем счётчик уведомлений
     if !is_from_me {

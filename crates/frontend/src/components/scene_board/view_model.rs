@@ -1,4 +1,3 @@
-use super::model::step_zoom;
 use leptos::prelude::*;
 
 /// Reactive state for the scene board's camera, panning, and drag interactions.
@@ -26,6 +25,18 @@ pub struct SceneBoardViewModel {
     drag_origin_scene_x: RwSignal<f64>,
     drag_origin_scene_y: RwSignal<f64>,
 
+    // Token drag state
+    pub dragging_token_id: RwSignal<Option<String>>,
+    token_drag_width_cells: RwSignal<u16>,
+    token_drag_height_cells: RwSignal<u16>,
+    token_drag_offset_x: RwSignal<f64>,
+    token_drag_offset_y: RwSignal<f64>,
+    token_drag_origin_x: RwSignal<f32>,
+    token_drag_origin_y: RwSignal<f32>,
+
+    pub pointer_local_x: RwSignal<f64>,
+    pub pointer_local_y: RwSignal<f64>,
+
     // Selection box
     pub is_selecting: RwSignal<bool>,
     pub selection_start_x: RwSignal<f64>,
@@ -35,11 +46,17 @@ pub struct SceneBoardViewModel {
 }
 
 impl SceneBoardViewModel {
-    pub fn new(initial_vw: f64, initial_vh: f64) -> Self {
+    pub fn new(
+        initial_vw: f64,
+        initial_vh: f64,
+        initial_camera_x: f64,
+        initial_camera_y: f64,
+        initial_zoom: f64,
+    ) -> Self {
         Self {
-            zoom: RwSignal::new(1.0),
-            camera_x: RwSignal::new(0.0),
-            camera_y: RwSignal::new(0.0),
+            zoom: RwSignal::new(initial_zoom),
+            camera_x: RwSignal::new(initial_camera_x),
+            camera_y: RwSignal::new(initial_camera_y),
             viewport_width: RwSignal::new(initial_vw),
             viewport_height: RwSignal::new(initial_vh),
             is_panning: RwSignal::new(false),
@@ -53,17 +70,21 @@ impl SceneBoardViewModel {
             drag_start_world_y: RwSignal::new(0.0),
             drag_origin_scene_x: RwSignal::new(0.0),
             drag_origin_scene_y: RwSignal::new(0.0),
+            dragging_token_id: RwSignal::new(None),
+            token_drag_width_cells: RwSignal::new(1),
+            token_drag_height_cells: RwSignal::new(1),
+            token_drag_offset_x: RwSignal::new(0.0),
+            token_drag_offset_y: RwSignal::new(0.0),
+            token_drag_origin_x: RwSignal::new(0.0),
+            token_drag_origin_y: RwSignal::new(0.0),
+            pointer_local_x: RwSignal::new(0.0),
+            pointer_local_y: RwSignal::new(0.0),
             is_selecting: RwSignal::new(false),
             selection_start_x: RwSignal::new(0.0),
             selection_start_y: RwSignal::new(0.0),
             selection_end_x: RwSignal::new(0.0),
             selection_end_y: RwSignal::new(0.0),
         }
-    }
-
-    pub fn handle_wheel(&self, delta_y: f64) {
-        let new_zoom = step_zoom(self.zoom.get_untracked(), delta_y);
-        self.zoom.set(new_zoom);
     }
 
     pub fn start_pan(&self, local_x: f64, local_y: f64) {
@@ -88,6 +109,12 @@ impl SceneBoardViewModel {
 
     pub fn end_pan(&self) {
         self.is_panning.set(false);
+    }
+
+    pub fn set_view_transform(&self, x: f64, y: f64, zoom: f64) {
+        self.camera_x.set(x);
+        self.camera_y.set(y);
+        self.zoom.set(zoom);
     }
 
     pub fn start_scene_drag(
@@ -125,12 +152,56 @@ impl SceneBoardViewModel {
         self.dragging_scene_id.set(None);
     }
 
-    pub fn drag_start_world_x(&self) -> f64 {
-        self.drag_start_world_x.get_untracked()
+    pub fn start_token_drag(
+        &self,
+        token_id: String,
+        token_width_cells: u16,
+        token_height_cells: u16,
+        offset_x: f64,
+        offset_y: f64,
+        origin_x: f32,
+        origin_y: f32,
+    ) {
+        self.dragging_token_id.set(Some(token_id));
+        self.token_drag_width_cells.set(token_width_cells);
+        self.token_drag_height_cells.set(token_height_cells);
+        self.token_drag_offset_x.set(offset_x);
+        self.token_drag_offset_y.set(offset_y);
+        self.token_drag_origin_x.set(origin_x);
+        self.token_drag_origin_y.set(origin_y);
     }
 
-    pub fn drag_start_world_y(&self) -> f64 {
-        self.drag_start_world_y.get_untracked()
+    pub fn end_token_drag(&self) {
+        self.dragging_token_id.set(None);
+    }
+
+    pub fn token_drag_width_cells(&self) -> u16 {
+        self.token_drag_width_cells.get_untracked()
+    }
+
+    pub fn token_drag_height_cells(&self) -> u16 {
+        self.token_drag_height_cells.get_untracked()
+    }
+
+    pub fn token_drag_offset_x(&self) -> f64 {
+        self.token_drag_offset_x.get_untracked()
+    }
+
+    pub fn token_drag_offset_y(&self) -> f64 {
+        self.token_drag_offset_y.get_untracked()
+    }
+
+    pub fn token_drag_origin_x(&self) -> f32 {
+        self.token_drag_origin_x.get_untracked()
+    }
+
+    pub fn token_drag_origin_y(&self) -> f32 {
+        self.token_drag_origin_y.get_untracked()
+    }
+
+    pub fn update_pointer(&self, local_x: f64, local_y: f64) {
+        self.pointer_local_x.set(local_x);
+        self.pointer_local_y.set(local_y);
     }
 
     pub fn drag_origin_scene_x(&self) -> f64 {
@@ -148,7 +219,7 @@ mod tests {
     use leptos::reactive::owner::Owner;
 
     fn make_vm() -> SceneBoardViewModel {
-        SceneBoardViewModel::new(1280.0, 720.0)
+        SceneBoardViewModel::new(1280.0, 720.0, 0.0, 0.0, 1.0)
     }
 
     #[test]
@@ -161,22 +232,13 @@ mod tests {
     }
 
     #[test]
-    fn handle_wheel_positive_delta_decreases_zoom() {
+    fn constructor_uses_initial_camera_position() {
         let owner = Owner::new();
         owner.with(|| {
-            let vm = make_vm();
-            vm.handle_wheel(1.0);
-            assert!(vm.zoom.get_untracked() < 1.0);
-        });
-    }
-
-    #[test]
-    fn handle_wheel_negative_delta_increases_zoom() {
-        let owner = Owner::new();
-        owner.with(|| {
-            let vm = make_vm();
-            vm.handle_wheel(-1.0);
-            assert!(vm.zoom.get_untracked() > 1.0);
+            let vm = SceneBoardViewModel::new(1280.0, 720.0, 42.0, -13.5, 1.75);
+            assert_eq!(vm.camera_x.get_untracked(), 42.0);
+            assert_eq!(vm.camera_y.get_untracked(), -13.5);
+            assert_eq!(vm.zoom.get_untracked(), 1.75);
         });
     }
 
@@ -224,6 +286,22 @@ mod tests {
         owner.with(|| {
             let vm = make_vm();
             assert!(vm.compute_scene_drag_position(0.0, 0.0).is_none());
+        });
+    }
+
+    #[test]
+    fn token_drag_stores_offsets_and_size() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let vm = make_vm();
+            vm.start_token_drag("token-1".into(), 2, 3, 14.0, 18.0, 3.0, 4.0);
+            assert_eq!(vm.dragging_token_id.get_untracked(), Some("token-1".into()));
+            assert_eq!(vm.token_drag_width_cells(), 2);
+            assert_eq!(vm.token_drag_height_cells(), 3);
+            assert_eq!(vm.token_drag_offset_x(), 14.0);
+            assert_eq!(vm.token_drag_offset_y(), 18.0);
+            assert_eq!(vm.token_drag_origin_x(), 3.0);
+            assert_eq!(vm.token_drag_origin_y(), 4.0);
         });
     }
 }

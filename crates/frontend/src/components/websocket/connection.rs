@@ -97,6 +97,7 @@ impl WsSender {
             | ClientEvent::SceneUpdate(_)
             | ClientEvent::SceneDelete(_)
             | ClientEvent::SceneActivate(_)
+            | ClientEvent::TokenMove(_)
             | ClientEvent::SyncRequest
             | ClientEvent::SyncVersionAnnounce(_)
             | ClientEvent::VotingStart(_)
@@ -244,6 +245,7 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
                 *last_synced_version.borrow_mut() = data.state.version;
                 *room_state.borrow_mut() = data.state.clone();
                 messages_signal.set(data.state.chat_history.clone());
+                file_transfer.reconcile_chat_attachments(&data.state.chat_history);
                 voting_results.set(data.state.voting_results.clone());
                 scenes_signal.set(data.state.scenes.clone());
                 active_scene_id_signal.set(data.state.active_scene_id.clone());

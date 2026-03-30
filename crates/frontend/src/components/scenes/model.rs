@@ -1,5 +1,7 @@
-/// Pure types, constants, and validation for scene management.
-/// No signals, no Leptos, no web_sys.
+// Pure types, constants, and validation for scene management.
+// No signals, no Leptos, no web_sys.
+
+use crate::components::scene_board::model::WORKSPACE_SCENE_CELL_SIZE_PX;
 
 // --- Constants ---
 
@@ -7,7 +9,7 @@ pub const MAX_SCENES_PER_ROOM: usize = 50;
 pub const DEFAULT_COLUMNS: &str = "24";
 pub const DEFAULT_ROWS: &str = "16";
 pub const DEFAULT_CELL_SIZE_FEET: &str = "5";
-pub const DEFAULT_SCENE_SPACING_PX: f32 = 720.0;
+pub const DEFAULT_SCENE_SPACING_GAP_PX: f32 = 240.0;
 pub const FILE_INPUT_ACCEPT: &str = "image/png,image/jpeg,image/webp,image/gif";
 pub const DEFAULT_BACKGROUND_SCALE: f32 = 1.0;
 pub const DEFAULT_BACKGROUND_OFFSET_X: f32 = 0.0;
@@ -50,8 +52,11 @@ pub struct FitPreviewLayout {
 // --- Pure functions ---
 
 /// Returns the default workspace position for the nth scene (0-indexed count).
-pub fn default_scene_position(scene_count: usize) -> (f32, f32) {
-    (scene_count as f32 * DEFAULT_SCENE_SPACING_PX, 0.0)
+pub fn default_scene_position(scene_count: usize, columns: u16, rows: u16) -> (f32, f32) {
+    let board_width = columns.max(1) as f32 * WORKSPACE_SCENE_CELL_SIZE_PX as f32;
+    let board_height = rows.max(1) as f32 * WORKSPACE_SCENE_CELL_SIZE_PX as f32;
+    let spacing = board_width.max(board_height) + DEFAULT_SCENE_SPACING_GAP_PX;
+    (scene_count as f32 * spacing, 0.0)
 }
 
 /// Validates and parses grid fields. Returns `Err(SceneValidationError)` on failure.
@@ -132,13 +137,15 @@ mod tests {
 
     #[test]
     fn default_scene_position_first() {
-        assert_eq!(default_scene_position(0), (0.0, 0.0));
+        assert_eq!(default_scene_position(0, 24, 16), (0.0, 0.0));
     }
 
     #[test]
-    fn default_scene_position_increments() {
-        let (x, y) = default_scene_position(2);
-        assert_eq!(x, DEFAULT_SCENE_SPACING_PX * 2.0);
+    fn default_scene_position_increments_by_board_size_plus_gap() {
+        let (x, y) = default_scene_position(2, 24, 16);
+        let expected_spacing =
+            24.0 * WORKSPACE_SCENE_CELL_SIZE_PX as f32 + DEFAULT_SCENE_SPACING_GAP_PX;
+        assert_eq!(x, expected_spacing * 2.0);
         assert_eq!(y, 0.0);
     }
 

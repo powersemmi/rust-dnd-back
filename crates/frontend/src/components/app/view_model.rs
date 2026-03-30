@@ -13,6 +13,7 @@ pub struct AppViewModel {
     pub is_menu_open: RwSignal<bool>,
     pub is_chat_open: RwSignal<bool>,
     pub is_scenes_open: RwSignal<bool>,
+    pub is_tokens_open: RwSignal<bool>,
     pub is_settings_open: RwSignal<bool>,
     pub is_statistics_open: RwSignal<bool>,
     pub is_voting_open: RwSignal<bool>,
@@ -34,6 +35,7 @@ impl AppViewModel {
             is_menu_open: RwSignal::new(false),
             is_chat_open: RwSignal::new(false),
             is_scenes_open: RwSignal::new(false),
+            is_tokens_open: RwSignal::new(false),
             is_settings_open: RwSignal::new(false),
             is_statistics_open: RwSignal::new(false),
             is_voting_open: RwSignal::new(false),
@@ -59,6 +61,11 @@ impl AppViewModel {
         self.active_window.set(ActiveWindow::Scenes);
     }
 
+    pub fn open_tokens(&self) {
+        self.is_tokens_open.set(true);
+        self.active_window.set(ActiveWindow::Tokens);
+    }
+
     pub fn open_settings(&self) {
         self.is_settings_open.set(true);
         self.active_window.set(ActiveWindow::Settings);
@@ -81,6 +88,7 @@ impl AppViewModel {
         match self.active_window.get_untracked() {
             ActiveWindow::Chat => self.is_chat_open.set(false),
             ActiveWindow::Scenes => self.is_scenes_open.set(false),
+            ActiveWindow::Tokens => self.is_tokens_open.set(false),
             ActiveWindow::Settings => self.is_settings_open.set(false),
             ActiveWindow::Voting => self.is_voting_open.set(false),
             ActiveWindow::Statistics => self.is_statistics_open.set(false),
@@ -102,6 +110,10 @@ impl AppViewModel {
             }
             "KeyG" => {
                 self.open_scenes();
+                true
+            }
+            "KeyT" => {
+                self.open_tokens();
                 true
             }
             "KeyS" => {
@@ -185,6 +197,18 @@ mod tests {
             let vm = make_vm();
             let handled = vm.handle_hotkey("KeyZ");
             assert!(!handled);
+        });
+    }
+
+    #[test]
+    fn handle_hotkey_key_t_opens_tokens() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let vm = make_vm();
+            let handled = vm.handle_hotkey("KeyT");
+            assert!(handled);
+            assert!(vm.is_tokens_open.get_untracked());
+            assert_eq!(vm.active_window.get_untracked(), ActiveWindow::Tokens);
         });
     }
 

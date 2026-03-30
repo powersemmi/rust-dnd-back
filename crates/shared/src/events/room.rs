@@ -31,7 +31,6 @@ pub struct RoomState {
     #[serde(default)]
     pub active_scene_id: Option<String>,
 
-    // В будущем сюда добавим пешки в Scene
     /// Версия состояния
     pub version: u64,
 

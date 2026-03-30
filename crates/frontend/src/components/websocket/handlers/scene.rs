@@ -2,7 +2,7 @@ use crate::components::websocket::{storage, utils};
 use leptos::prelude::*;
 use shared::events::{
     RoomState, Scene, SceneActivatePayload, SceneCreatePayload, SceneDeletePayload,
-    SceneUpdatePayload,
+    SceneUpdatePayload, TokenMovePayload,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -10,6 +10,7 @@ use std::rc::Rc;
 use super::HandlerContext;
 
 const MAX_SCENES_PER_ROOM: usize = 50;
+const TOKEN_POSITION_EPSILON: f32 = 0.001;
 
 fn sync_scene_signals(
     room_state: &Rc<RefCell<RoomState>>,
@@ -173,5 +174,58 @@ pub fn handle_scene_activate(payload: SceneActivatePayload, ctx: &HandlerContext
         current_ver,
         "SCENE_ACTIVATE",
         &format!("{} activated scene '{}'", payload.actor, activated_name),
+    );
+}
+
+pub fn handle_token_move(payload: TokenMovePayload, ctx: &HandlerContext<'_>) {
+    let (current_ver, moved_token_name) = {
+        let mut state = ctx.room_state.borrow_mut();
+        let mut moved_token_name = None::<String>;
+
+        for scene in &mut state.scenes {
+            let Some(token) = scene
+                .tokens
+                .iter_mut()
+                .find(|token| token.id == payload.token_id)
+            else {
+                continue;
+            };
+
+            if (token.x - payload.x).abs() < TOKEN_POSITION_EPSILON
+                && (token.y - payload.y).abs() < TOKEN_POSITION_EPSILON
+            {
+                return;
+            }
+
+            token.x = payload.x;
+            token.y = payload.y;
+            moved_token_name = Some(token.name.clone());
+            break;
+        }
+
+        let Some(moved_token_name) = moved_token_name else {
+            return;
+        };
+
+        state.commit_changes();
+        (state.version, moved_token_name)
+    };
+
+    *ctx.local_version.borrow_mut() = current_ver;
+    if payload.actor != ctx.my_username {
+        *ctx.last_synced_version.borrow_mut() = current_ver;
+    }
+
+    sync_scene_signals(
+        ctx.room_state,
+        ctx.scenes_signal,
+        ctx.active_scene_id_signal,
+    );
+    storage::save_state_in_background(ctx.room_name, &ctx.room_state.borrow());
+    utils::log_event(
+        ctx.state_events,
+        current_ver,
+        "TOKEN_MOVE",
+        &format!("{} moved token '{}'", payload.actor, moved_token_name),
     );
 }

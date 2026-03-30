@@ -4,7 +4,12 @@ use crate::i18n::i18n::{Locale, t, use_i18n};
 use leptos::prelude::*;
 
 #[component]
-pub fn Settings(#[prop(into)] is_open: RwSignal<bool>, theme: Theme) -> impl IntoView {
+pub fn Settings(
+    #[prop(into)] is_open: RwSignal<bool>,
+    #[prop(into)] show_workspace_hint: RwSignal<bool>,
+    #[prop(into)] show_inactive_scene_contents: RwSignal<bool>,
+    theme: Theme,
+) -> impl IntoView {
     let i18n = use_i18n();
     let vm = SettingsViewModel::new(is_open);
     let current_locale = i18n.get_locale();
@@ -54,6 +59,44 @@ pub fn Settings(#[prop(into)] is_open: RwSignal<bool>, theme: Theme) -> impl Int
                                 <option value="ru">"Русский"</option>
                             </select>
                         </div>
+
+                        <label style=format!(
+                            "display: flex; gap: 0.75rem; align-items: flex-start; padding: 0.9rem 1rem; \
+                             border-radius: 0.625rem; background: {}; color: {}; cursor: pointer;",
+                            theme.ui_bg_secondary, theme.ui_text_primary
+                        )>
+                            <input
+                                type="checkbox"
+                                prop:checked=move || show_workspace_hint.get()
+                                on:change=move |ev| show_workspace_hint.set(event_target_checked(&ev))
+                                style="margin-top: 0.2rem; width: 1rem; height: 1rem;"
+                            />
+                            <span style="display: flex; flex-direction: column; gap: 0.3rem;">
+                                <span>{t!(i18n, settings.show_workspace_hint)}</span>
+                                <span style=format!("color: {}; font-size: 0.82rem; line-height: 1.45;", theme.ui_text_secondary)>
+                                    {t!(i18n, settings.show_workspace_hint_hint)}
+                                </span>
+                            </span>
+                        </label>
+
+                        <label style=format!(
+                            "display: flex; gap: 0.75rem; align-items: flex-start; padding: 0.9rem 1rem; \
+                             border-radius: 0.625rem; background: {}; color: {}; cursor: pointer;",
+                            theme.ui_bg_secondary, theme.ui_text_primary
+                        )>
+                            <input
+                                type="checkbox"
+                                prop:checked=move || show_inactive_scene_contents.get()
+                                on:change=move |ev| show_inactive_scene_contents.set(event_target_checked(&ev))
+                                style="margin-top: 0.2rem; width: 1rem; height: 1rem;"
+                            />
+                            <span style="display: flex; flex-direction: column; gap: 0.3rem;">
+                                <span>{t!(i18n, settings.show_inactive_scene_contents)}</span>
+                                <span style=format!("color: {}; font-size: 0.82rem; line-height: 1.45;", theme.ui_text_secondary)>
+                                    {t!(i18n, settings.show_inactive_scene_contents_hint)}
+                                </span>
+                            </span>
+                        </label>
 
                         <button
                             on:click=move |_| vm.close()

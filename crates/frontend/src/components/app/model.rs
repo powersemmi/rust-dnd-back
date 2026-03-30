@@ -4,6 +4,7 @@ pub enum ActiveWindow {
     None,
     Chat,
     Scenes,
+    Tokens,
     Settings,
     Statistics,
     Voting,

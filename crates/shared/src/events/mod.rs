@@ -16,7 +16,7 @@ pub use crate::events::params::Params;
 pub use crate::events::room::RoomState;
 pub use crate::events::scene::{
     FileRef, Scene, SceneActivatePayload, SceneCreatePayload, SceneDeletePayload, SceneGrid,
-    SceneUpdatePayload,
+    SceneUpdatePayload, Token, TokenMovePayload,
 };
 pub use crate::events::sync::{
     SyncSnapshotPayload, SyncSnapshotRequestPayload, SyncVersionPayload,
@@ -57,6 +57,8 @@ pub enum ClientEvent {
     SceneDelete(SceneDeletePayload),
     #[serde(rename = "SCENE_ACTIVATE")]
     SceneActivate(SceneActivatePayload),
+    #[serde(rename = "TOKEN_MOVE")]
+    TokenMove(TokenMovePayload),
 
     /// Sync events
     #[serde(rename = "SYNC_REQUEST")]
@@ -105,6 +107,7 @@ impl ClientEvent {
             ClientEvent::SceneUpdate(p) => p.validate(),
             ClientEvent::SceneDelete(p) => p.validate(),
             ClientEvent::SceneActivate(p) => p.validate(),
+            ClientEvent::TokenMove(p) => p.validate(),
             ClientEvent::SyncVersionAnnounce(p) => p.validate(),
             ClientEvent::SyncSnapshotRequest(p) => p.validate(),
             ClientEvent::SyncSnapshot(p) => p.validate(),

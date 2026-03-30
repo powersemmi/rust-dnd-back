@@ -4,7 +4,7 @@ use utoipa::ToSchema;
 #[cfg(feature = "validation")]
 use validator::Validate;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[cfg_attr(feature = "schemas", derive(ToSchema))]
 #[cfg_attr(feature = "validation", derive(Validate))]
 pub struct FileRef {
@@ -32,6 +32,26 @@ pub struct SceneGrid {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[cfg_attr(feature = "schemas", derive(ToSchema))]
 #[cfg_attr(feature = "validation", derive(Validate))]
+pub struct Token {
+    #[cfg_attr(feature = "validation", validate(length(min = 1, max = 255)))]
+    pub id: String,
+    #[cfg_attr(feature = "validation", validate(length(min = 1, max = 255)))]
+    pub name: String,
+    #[cfg_attr(feature = "validation", validate(nested))]
+    pub image: FileRef,
+    #[serde(default)]
+    pub x: f32,
+    #[serde(default)]
+    pub y: f32,
+    #[cfg_attr(feature = "validation", validate(range(min = 1, max = 16)))]
+    pub width_cells: u16,
+    #[cfg_attr(feature = "validation", validate(range(min = 1, max = 16)))]
+    pub height_cells: u16,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemas", derive(ToSchema))]
+#[cfg_attr(feature = "validation", derive(Validate))]
 pub struct Scene {
     #[cfg_attr(feature = "validation", validate(length(min = 1, max = 255)))]
     pub id: String,
@@ -54,6 +74,9 @@ pub struct Scene {
     pub background_offset_y: f32,
     #[serde(default)]
     pub background_rotation_deg: f32,
+    #[serde(default)]
+    #[cfg_attr(feature = "validation", validate(nested))]
+    pub tokens: Vec<Token>,
 }
 
 const fn default_background_scale() -> f32 {
@@ -98,4 +121,36 @@ pub struct SceneActivatePayload {
     pub scene_id: String,
     #[cfg_attr(feature = "validation", validate(length(min = 1, max = 255)))]
     pub actor: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemas", derive(ToSchema))]
+#[cfg_attr(feature = "validation", derive(Validate))]
+pub struct TokenMovePayload {
+    #[cfg_attr(feature = "validation", validate(length(min = 1, max = 255)))]
+    pub token_id: String,
+    #[serde(default)]
+    pub x: f32,
+    #[serde(default)]
+    pub y: f32,
+    #[cfg_attr(feature = "validation", validate(length(min = 1, max = 255)))]
+    pub actor: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scene_tokens_default_to_empty_on_legacy_payloads() {
+        let raw = r#"{
+            "id":"scene-1",
+            "name":"Arena",
+            "grid":{"columns":24,"rows":16,"cell_size_feet":5}
+        }"#;
+
+        let scene: Scene = serde_json::from_str(raw).unwrap();
+        assert!(scene.tokens.is_empty());
+        assert_eq!(scene.background_scale, 1.0);
+    }
 }

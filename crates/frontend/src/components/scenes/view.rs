@@ -40,6 +40,12 @@ use web_sys::{Event, HtmlInputElement};
 
 use crate::components::websocket::WsSender;
 
+const SCENES_TITLE_FONT_SIZE: &str = "clamp(1rem, 0.95rem + 0.22vw, 1.18rem)";
+const SCENES_SECTION_FONT_SIZE: &str = "clamp(0.95rem, 0.91rem + 0.16vw, 1.05rem)";
+const SCENES_BODY_FONT_SIZE: &str = "clamp(0.9rem, 0.87rem + 0.12vw, 0.98rem)";
+const SCENES_META_FONT_SIZE: &str = "clamp(0.74rem, 0.71rem + 0.12vw, 0.82rem)";
+const SCENES_BUTTON_FONT_SIZE: &str = "clamp(0.84rem, 0.81rem + 0.12vw, 0.94rem)";
+
 #[component]
 pub fn ScenesWindow(
     #[prop(into)] is_open: RwSignal<bool>,
@@ -75,7 +81,8 @@ pub fn ScenesWindow(
         ) else {
             return;
         };
-        let (workspace_x, workspace_y) = default_scene_position(scenes.get_untracked().len());
+        let (workspace_x, workspace_y) =
+            default_scene_position(scenes.get_untracked().len(), grid.columns, grid.rows);
         let scene = Scene {
             id: Uuid::new_v4().to_string(),
             name: vm.draft_name.get_untracked().trim().to_string(),
@@ -94,6 +101,7 @@ pub fn ScenesWindow(
                 .clamp(MIN_BACKGROUND_OFFSET_PX, MAX_BACKGROUND_OFFSET_PX),
             background_rotation_deg: vm
                 .clamp_background_rotation(vm.draft_background_rotation_deg.get_untracked()),
+            tokens: Vec::new(),
         };
         send_event(ClientEvent::SceneCreate(SceneCreatePayload {
             scene,
@@ -135,6 +143,7 @@ pub fn ScenesWindow(
                 .clamp(MIN_BACKGROUND_OFFSET_PX, MAX_BACKGROUND_OFFSET_PX),
             background_rotation_deg: vm
                 .clamp_background_rotation(vm.draft_background_rotation_deg.get_untracked()),
+            tokens: existing.map(|scene| scene.tokens).unwrap_or_default(),
         };
         send_event(ClientEvent::SceneUpdate(SceneUpdatePayload {
             scene,
@@ -253,15 +262,18 @@ pub fn ScenesWindow(
                             <button
                                 on:click=move |_| vm.reset()
                                 style=format!(
-                                    "padding: 0.45rem 0.75rem; background: {}; color: {}; border: none; border-radius: 0.3125rem; cursor: pointer;",
-                                    theme.ui_button_primary, theme.ui_text_primary
+                                    "padding: 0.45rem 0.75rem; background: {}; color: {}; border: none; border-radius: 0.5rem; cursor: pointer; font-size: {};",
+                                    theme.ui_button_primary, theme.ui_text_primary, SCENES_BUTTON_FONT_SIZE
                                 )
                             >
                                 {move || t!(i18n, scenes.new_button)}
                             </button>
                         </div>
 
-                        <div style=format!("color: {}; font-size: 0.8125rem; margin-bottom: 0.75rem;", theme.ui_text_secondary)>
+                        <div style=format!(
+                            "color: {}; font-size: {}; margin-bottom: 0.75rem;",
+                            theme.ui_text_secondary, SCENES_META_FONT_SIZE
+                        )>
                             {move || format!("{}/{}", scenes.get().len(), MAX_SCENES_PER_ROOM)}
                         </div>
 
@@ -298,13 +310,19 @@ pub fn ScenesWindow(
                                                             <div style=format!("color: {}; font-weight: 700;", theme.ui_text_primary)>
                                                                 {scene.name.clone()}
                                                             </div>
-                                                            <div style=format!("color: {}; font-size: 0.8125rem; margin-top: 0.25rem;", theme.ui_text_secondary)>
+                                                            <div style=format!(
+                                                                "color: {}; font-size: {}; margin-top: 0.25rem;",
+                                                                theme.ui_text_secondary, SCENES_META_FONT_SIZE
+                                                            )>
                                                                 {format!("{} x {} · {} ft", scene.grid.columns, scene.grid.rows, scene.grid.cell_size_feet)}
                                                             </div>
                                                         </div>
                                                         {move || if is_active_scene.get() {
                                                             view! {
-                                                                <span style=format!("background: {}; color: {}; padding: 0.2rem 0.5rem; border-radius: 999px; font-size: 0.75rem;", theme.ui_success, theme.ui_text_primary)>
+                                                                <span style=format!(
+                                                                    "background: {}; color: {}; padding: 0.2rem 0.5rem; border-radius: 999px; font-size: {};",
+                                                                    theme.ui_success, theme.ui_text_primary, SCENES_META_FONT_SIZE
+                                                                )>
                                                                     {t!(i18n, scenes.active_badge)}
                                                                 </span>
                                                             }.into_any()
@@ -315,8 +333,8 @@ pub fn ScenesWindow(
                                                         <button
                                                             on:click=move |_| vm.apply_scene(&edit_scene)
                                                             style=format!(
-                                                                "padding: 0.4rem 0.7rem; background: {}; color: {}; border: none; border-radius: 0.3125rem; cursor: pointer;",
-                                                                theme.ui_button_primary, theme.ui_text_primary
+                                                                "padding: 0.4rem 0.7rem; background: {}; color: {}; border: none; border-radius: 0.5rem; cursor: pointer; font-size: {};",
+                                                                theme.ui_button_primary, theme.ui_text_primary, SCENES_BUTTON_FONT_SIZE
                                                             )
                                                         >
                                                             {move || t!(i18n, scenes.edit_button)}
@@ -329,8 +347,8 @@ pub fn ScenesWindow(
                                                                 }));
                                                             }
                                                             style=format!(
-                                                                "padding: 0.4rem 0.7rem; background: {}; color: {}; border: none; border-radius: 0.3125rem; cursor: pointer;",
-                                                                theme.ui_success, theme.ui_text_primary
+                                                                "padding: 0.4rem 0.7rem; background: {}; color: {}; border: none; border-radius: 0.5rem; cursor: pointer; font-size: {};",
+                                                                theme.ui_success, theme.ui_text_primary, SCENES_BUTTON_FONT_SIZE
                                                             )
                                                         >
                                                             {move || t!(i18n, scenes.activate_button)}
@@ -343,8 +361,8 @@ pub fn ScenesWindow(
                                                                 }));
                                                             }
                                                             style=format!(
-                                                                "padding: 0.4rem 0.7rem; background: {}; color: {}; border: none; border-radius: 0.3125rem; cursor: pointer;",
-                                                                theme.ui_button_danger, theme.ui_text_primary
+                                                                "padding: 0.4rem 0.7rem; background: {}; color: {}; border: none; border-radius: 0.5rem; cursor: pointer; font-size: {};",
+                                                                theme.ui_button_danger, theme.ui_text_primary, SCENES_BUTTON_FONT_SIZE
                                                             )
                                                         >
                                                             {move || t!(i18n, scenes.delete_button)}
@@ -361,7 +379,10 @@ pub fn ScenesWindow(
 
                     // Right panel: editor form
                     <div style="flex: 1; padding: 1rem; overflow-y: auto;">
-                        <h4 style=format!("margin: 0 0 0.75rem 0; color: {};", theme.ui_text_primary)>
+                        <h4 style=format!(
+                            "margin: 0 0 0.75rem 0; color: {}; font-size: {}; line-height: 1.2;",
+                            theme.ui_text_primary, SCENES_SECTION_FONT_SIZE
+                        )>
                             {move || {
                                 if vm.selected_scene_id.get().is_some() {
                                     t_string!(i18n, scenes.edit_title).to_string()
@@ -379,7 +400,10 @@ pub fn ScenesWindow(
                                     type="text"
                                     prop:value=move || vm.draft_name.get()
                                     on:input=move |ev| vm.draft_name.set(event_target_value(&ev))
-                                    style=format!("padding: 0.625rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.375rem;", theme.ui_bg_secondary, theme.ui_text_primary, theme.ui_border)
+                                    style=format!(
+                                        "padding: 0.625rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.5rem; font-size: {};",
+                                        theme.ui_bg_secondary, theme.ui_text_primary, theme.ui_border, SCENES_BODY_FONT_SIZE
+                                    )
                                 />
                             </label>
 
@@ -390,7 +414,10 @@ pub fn ScenesWindow(
                                     <input type="number" min="1" max="200"
                                         prop:value=move || vm.draft_columns.get()
                                         on:input=move |ev| vm.draft_columns.set(event_target_value(&ev))
-                                        style=format!("padding: 0.625rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.375rem;", theme.ui_bg_secondary, theme.ui_text_primary, theme.ui_border)
+                                        style=format!(
+                                            "padding: 0.625rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.5rem; font-size: {};",
+                                            theme.ui_bg_secondary, theme.ui_text_primary, theme.ui_border, SCENES_BODY_FONT_SIZE
+                                        )
                                     />
                                 </label>
                                 <label style=format!("color: {}; display: flex; flex-direction: column; gap: 0.35rem;", theme.ui_text_secondary)>
@@ -398,7 +425,10 @@ pub fn ScenesWindow(
                                     <input type="number" min="1" max="200"
                                         prop:value=move || vm.draft_rows.get()
                                         on:input=move |ev| vm.draft_rows.set(event_target_value(&ev))
-                                        style=format!("padding: 0.625rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.375rem;", theme.ui_bg_secondary, theme.ui_text_primary, theme.ui_border)
+                                        style=format!(
+                                            "padding: 0.625rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.5rem; font-size: {};",
+                                            theme.ui_bg_secondary, theme.ui_text_primary, theme.ui_border, SCENES_BODY_FONT_SIZE
+                                        )
                                     />
                                 </label>
                                 <label style=format!("color: {}; display: flex; flex-direction: column; gap: 0.35rem;", theme.ui_text_secondary)>
@@ -406,21 +436,30 @@ pub fn ScenesWindow(
                                     <input type="number" min="1" max="100"
                                         prop:value=move || vm.draft_cell_size_feet.get()
                                         on:input=move |ev| vm.draft_cell_size_feet.set(event_target_value(&ev))
-                                        style=format!("padding: 0.625rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.375rem;", theme.ui_bg_secondary, theme.ui_text_primary, theme.ui_border)
+                                        style=format!(
+                                            "padding: 0.625rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.5rem; font-size: {};",
+                                            theme.ui_bg_secondary, theme.ui_text_primary, theme.ui_border, SCENES_BODY_FONT_SIZE
+                                        )
                                     />
                                 </label>
                             </div>
 
                             // Background section
                             <div style=format!("padding: 0.85rem; border: 0.0625rem solid {}; border-radius: 0.5rem; background: {};", theme.ui_bg_primary, theme.ui_border)>
-                                <div style=format!("color: {}; font-size: 0.8125rem; margin-bottom: 0.55rem;", theme.ui_text_secondary)>
+                                <div style=format!(
+                                    "color: {}; font-size: {}; margin-bottom: 0.55rem;",
+                                    theme.ui_text_secondary, SCENES_META_FONT_SIZE
+                                )>
                                     {move || t!(i18n, scenes.background_label)}
                                 </div>
 
                                 {move || {
                                     let Some(file_ref) = vm.draft_background.get() else {
                                         return view! {
-                                            <div style=format!("color: {}; font-size: 0.8125rem;", theme.ui_text_muted)>
+                                            <div style=format!(
+                                                "color: {}; font-size: {};",
+                                                theme.ui_text_muted, SCENES_META_FONT_SIZE
+                                            )>
                                                 {t!(i18n, scenes.background_empty)}
                                             </div>
                                         }.into_any();
@@ -430,15 +469,24 @@ pub fn ScenesWindow(
                                     let is_image = file_ref.mime_type.starts_with("image/");
                                     view! {
                                         <div style="display: flex; flex-direction: column; gap: 0.65rem;">
-                                            <div style=format!("color: {}; font-size: 0.875rem; font-weight: 600;", theme.ui_text_primary)>
+                                            <div style=format!(
+                                                "color: {}; font-size: {}; font-weight: 600;",
+                                                theme.ui_text_primary, SCENES_BODY_FONT_SIZE
+                                            )>
                                                 {file_ref.file_name.clone()}
                                             </div>
-                                            <div style=format!("color: {}; font-size: 0.78rem;", theme.ui_text_secondary)>
+                                            <div style=format!(
+                                                "color: {}; font-size: {};",
+                                                theme.ui_text_secondary, SCENES_META_FONT_SIZE
+                                            )>
                                                 {format!("{} - {} bytes", file_ref.mime_type, file_ref.size)}
                                             </div>
                                             {match status {
                                                 Some(s) if s.stage != FileTransferStage::Complete => view! {
-                                                    <div style=format!("color: {}; font-size: 0.78rem;", theme.ui_text_secondary)>
+                                                    <div style=format!(
+                                                        "color: {}; font-size: {};",
+                                                        theme.ui_text_secondary, SCENES_META_FONT_SIZE
+                                                    )>
                                                         {format!("{} {}%", t_string!(i18n, scenes.background_status), s.progress_percent())}
                                                     </div>
                                                 }.into_any(),
@@ -473,7 +521,10 @@ pub fn ScenesWindow(
                                                 input.click();
                                             }
                                         }
-                                        style=format!("display: inline-flex; align-items: center; padding: 0.625rem 1rem; background: {}; color: {}; border: none; border-radius: 0.375rem; cursor: pointer;", theme.ui_button_primary, theme.ui_text_primary)
+                                        style=format!(
+                                            "display: inline-flex; align-items: center; padding: 0.625rem 1rem; background: {}; color: {}; border: none; border-radius: 0.5rem; cursor: pointer; font-size: {};",
+                                            theme.ui_button_primary, theme.ui_text_primary, SCENES_BUTTON_FONT_SIZE
+                                        )
                                     >
                                         {move || t!(i18n, scenes.background_upload_button)}
                                     </button>
@@ -482,7 +533,10 @@ pub fn ScenesWindow(
                                             vm.draft_background.set(None);
                                             vm.close_background_fit_editor();
                                         }
-                                        style=format!("padding: 0.625rem 1rem; background: {}; color: {}; border: none; border-radius: 0.375rem; cursor: pointer;", theme.ui_bg_secondary, theme.ui_text_primary)
+                                        style=format!(
+                                            "padding: 0.625rem 1rem; background: {}; color: {}; border: none; border-radius: 0.5rem; cursor: pointer; font-size: {};",
+                                            theme.ui_bg_secondary, theme.ui_text_primary, SCENES_BUTTON_FONT_SIZE
+                                        )
                                     >
                                         {move || t!(i18n, scenes.background_remove_button)}
                                     </button>
@@ -493,7 +547,10 @@ pub fn ScenesWindow(
                                         view! {
                                             <button type="button"
                                                 on:click=move |_| vm.is_background_fit_editor_open.set(true)
-                                                style=format!("padding: 0.625rem 1rem; background: {}; color: {}; border: none; border-radius: 0.375rem; cursor: pointer;", theme.ui_success, theme.ui_text_primary)
+                                                style=format!(
+                                                    "padding: 0.625rem 1rem; background: {}; color: {}; border: none; border-radius: 0.5rem; cursor: pointer; font-size: {};",
+                                                    theme.ui_success, theme.ui_text_primary, SCENES_BUTTON_FONT_SIZE
+                                                )
                                             >
                                                 {move || t!(i18n, scenes.background_fit_open_button)}
                                             </button>
@@ -503,7 +560,10 @@ pub fn ScenesWindow(
                             </div>
 
                             // Active scene hint
-                            <div style=format!("color: {}; font-size: 0.8125rem;", theme.ui_text_muted)>
+                            <div style=format!(
+                                "color: {}; font-size: {};",
+                                theme.ui_text_muted, SCENES_META_FONT_SIZE
+                            )>
                                 {move || {
                                     if let Some(id) = active_scene_id.get() {
                                         scenes.get().into_iter()
@@ -520,7 +580,10 @@ pub fn ScenesWindow(
                             {move || {
                                 if let Some(err) = vm.editor_error.get() {
                                     view! {
-                                        <div style=format!("background: rgba(239,68,68,0.15); color: {}; padding: 0.625rem; border-radius: 0.375rem;", theme.ui_button_danger)>
+                                        <div style=format!(
+                                            "background: rgba(239,68,68,0.15); color: {}; padding: 0.625rem; border-radius: 0.5rem; font-size: {}; line-height: 1.45;",
+                                            theme.ui_button_danger, SCENES_BODY_FONT_SIZE
+                                        )>
                                             {err}
                                         </div>
                                     }.into_any()
@@ -539,7 +602,10 @@ pub fn ScenesWindow(
                                             create_scene(());
                                         }
                                     }
-                                    style=format!("padding: 0.625rem 1rem; background: {}; color: {}; border: none; border-radius: 0.375rem; cursor: pointer;", theme.ui_button_primary, theme.ui_text_primary)
+                                    style=format!(
+                                        "padding: 0.625rem 1rem; background: {}; color: {}; border: none; border-radius: 0.5rem; cursor: pointer; font-size: {};",
+                                        theme.ui_button_primary, theme.ui_text_primary, SCENES_BUTTON_FONT_SIZE
+                                    )
                                 >
                                     {move || {
                                         if vm.selected_scene_id.get().is_some() {
@@ -551,7 +617,10 @@ pub fn ScenesWindow(
                                 </button>
                                 <button
                                     on:click=move |_| vm.reset()
-                                    style=format!("padding: 0.625rem 1rem; background: {}; color: {}; border: none; border-radius: 0.375rem; cursor: pointer;", theme.ui_bg_secondary, theme.ui_text_primary)
+                                    style=format!(
+                                        "padding: 0.625rem 1rem; background: {}; color: {}; border: none; border-radius: 0.5rem; cursor: pointer; font-size: {};",
+                                        theme.ui_bg_secondary, theme.ui_text_primary, SCENES_BUTTON_FONT_SIZE
+                                    )
                                 >
                                     {move || t!(i18n, scenes.reset_button)}
                                 </button>
@@ -571,14 +640,23 @@ pub fn ScenesWindow(
                         <div style="flex: 1; min-width: 0; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
                             <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
                                 <div style="min-width: 0;">
-                                    <div style=format!("color: {}; font-size: 1.15rem; font-weight: 800;", theme.ui_text_primary)>
+                                    <div style=format!(
+                                        "color: {}; font-size: {}; font-weight: 800; line-height: 1.15;",
+                                        theme.ui_text_primary, SCENES_TITLE_FONT_SIZE
+                                    )>
                                         {move || t!(i18n, scenes.background_fit_title)}
                                     </div>
-                                    <div style=format!("color: {}; font-size: 0.84rem; margin-top: 0.35rem; line-height: 1.45;", theme.ui_text_secondary)>
+                                    <div style=format!(
+                                        "color: {}; font-size: {}; margin-top: 0.35rem; line-height: 1.45;",
+                                        theme.ui_text_secondary, SCENES_BODY_FONT_SIZE
+                                    )>
                                         {move || t!(i18n, scenes.background_fit_live_preview_hint)}
                                     </div>
                                 </div>
-                                <div style=format!("color: {}; font-size: 0.8rem;", theme.ui_text_muted)>
+                                <div style=format!(
+                                    "color: {}; font-size: {};",
+                                    theme.ui_text_muted, SCENES_META_FONT_SIZE
+                                )>
                                     {move || {
                                         let cols = vm.draft_columns.get().parse::<u16>().ok().filter(|v| (1..=200).contains(v));
                                         let rows = vm.draft_rows.get().parse::<u16>().ok().filter(|v| (1..=200).contains(v));
@@ -597,7 +675,10 @@ pub fn ScenesWindow(
                                     let rows = vm.draft_rows.get().parse::<u16>().ok().filter(|v| (1..=200).contains(v));
                                     let (Some(columns), Some(rows)) = (cols, rows) else {
                                         return view! {
-                                            <div style=format!("color: {}; font-size: 0.9rem;", theme.ui_text_muted)>
+                                            <div style=format!(
+                                                "color: {}; font-size: {};",
+                                                theme.ui_text_muted, SCENES_BODY_FONT_SIZE
+                                            )>
                                                 {t!(i18n, scenes.error_invalid_grid)}
                                             </div>
                                         }.into_any();
@@ -619,7 +700,7 @@ pub fn ScenesWindow(
 
                                     view! {
                                         <div style=format!("position: relative; width: {:.2}px; height: {:.2}px; transform: scale({:.4}); transform-origin: center center; flex: 0 0 auto;", board.board_width, board.board_height, board.scale)>
-                                            <div style=format!("position: relative; width: {:.2}px; height: {:.2}px; border: 0.125rem solid {}; border-radius: 1rem; overflow: hidden; background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(0,0,0,0.22)), {}; box-shadow: 0 24px 80px rgba(0,0,0,0.32), inset 0 0 0 0.0625rem rgba(255,255,255,0.06);", board.board_width, board.board_height, theme.ui_success, theme.ui_bg_primary)>
+                                            <div style=format!("position: relative; width: {:.2}px; height: {:.2}px; border: 0.125rem solid {}; border-radius: 1rem; overflow: hidden; background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(0,0,0,0.22)), {}; box-shadow: 0 1.5rem 5rem rgba(0,0,0,0.32), inset 0 0 0 0.0625rem rgba(255,255,255,0.06);", board.board_width, board.board_height, theme.ui_success, theme.ui_bg_primary)>
                                                 {match preview_url {
                                                     Some(url) => view! {
                                                         <>
@@ -647,12 +728,18 @@ pub fn ScenesWindow(
                                                     }.into_any(),
                                                     None => match transfer_status {
                                                         Some(s) if s.stage != FileTransferStage::Complete => view! {
-                                                            <div style=format!("position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: {}; font-size: 0.95rem; background: rgba(0,0,0,0.18);", theme.ui_text_secondary)>
+                                                            <div style=format!(
+                                                                "position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: {}; font-size: {}; background: rgba(0,0,0,0.18);",
+                                                                theme.ui_text_secondary, SCENES_BODY_FONT_SIZE
+                                                            )>
                                                                 {format!("{} {}%", t_string!(i18n, scenes.background_status), s.progress_percent())}
                                                             </div>
                                                         }.into_any(),
                                                         _ => view! {
-                                                            <div style=format!("position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: {}; font-size: 0.95rem;", theme.ui_text_muted)>
+                                                            <div style=format!(
+                                                                "position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: {}; font-size: {};",
+                                                                theme.ui_text_muted, SCENES_BODY_FONT_SIZE
+                                                            )>
                                                                 {t!(i18n, scenes.background_empty)}
                                                             </div>
                                                         }.into_any(),
@@ -688,16 +775,25 @@ pub fn ScenesWindow(
                         </div>
 
                         // Sidebar controls
-                        <div style=format!("width: min(34rem, 100vw); height: 100vh; background: linear-gradient(180deg, {}, {}); border-left: 0.0625rem solid {}; box-shadow: -24px 0 64px rgba(0,0,0,0.35); display: flex; flex-direction: column;", theme.ui_bg_primary, theme.ui_bg_secondary, theme.ui_border)>
+                        <div style=format!("width: min(34rem, 100vw); height: 100vh; background: linear-gradient(180deg, {}, {}); border-left: 0.0625rem solid {}; box-shadow: -1.5rem 0 4rem rgba(0,0,0,0.35); display: flex; flex-direction: column;", theme.ui_bg_primary, theme.ui_bg_secondary, theme.ui_border)>
                             <div style=format!("padding: 1.4rem 1.5rem 1rem; border-bottom: 0.0625rem solid {}; display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start;", theme.ui_border)>
                                 <div style="min-width: 0;">
-                                    <div style=format!("color: {}; font-size: 1.2rem; font-weight: 800;", theme.ui_text_primary)>
+                                    <div style=format!(
+                                        "color: {}; font-size: {}; font-weight: 800; line-height: 1.15;",
+                                        theme.ui_text_primary, SCENES_TITLE_FONT_SIZE
+                                    )>
                                         {move || t!(i18n, scenes.background_fit_modal_title)}
                                     </div>
-                                    <div style=format!("color: {}; font-size: 0.84rem; margin-top: 0.45rem; line-height: 1.45;", theme.ui_text_secondary)>
+                                    <div style=format!(
+                                        "color: {}; font-size: {}; margin-top: 0.45rem; line-height: 1.45;",
+                                        theme.ui_text_secondary, SCENES_BODY_FONT_SIZE
+                                    )>
                                         {move || t!(i18n, scenes.background_fit_modal_hint)}
                                     </div>
-                                    <div style=format!("color: {}; font-size: 0.78rem; margin-top: 0.55rem;", theme.ui_text_muted)>
+                                    <div style=format!(
+                                        "color: {}; font-size: {}; margin-top: 0.55rem;",
+                                        theme.ui_text_muted, SCENES_META_FONT_SIZE
+                                    )>
                                         {move || {
                                             vm.selected_scene_id.get()
                                                 .and_then(|id| scenes.get().into_iter().find(|s| s.id == id).map(|s| s.name))
@@ -707,14 +803,20 @@ pub fn ScenesWindow(
                                 </div>
                                 <button type="button"
                                     on:click=move |_| vm.close_background_fit_editor()
-                                    style=format!("background: {}; border: none; color: {}; padding: 0.35rem 0.75rem; border-radius: 0.375rem; cursor: pointer; font-size: 1rem; font-weight: 700;", theme.ui_button_danger, theme.ui_text_primary)
+                                    style=format!(
+                                        "background: {}; border: none; color: {}; padding: 0.35rem 0.75rem; border-radius: 0.5rem; cursor: pointer; font-size: {}; font-weight: 700;",
+                                        theme.ui_button_danger, theme.ui_text_primary, SCENES_BUTTON_FONT_SIZE
+                                    )
                                 >
                                     "x"
                                 </button>
                             </div>
 
                             <div style="flex: 1; overflow-y: auto; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
-                                <div style=format!("padding: 0.9rem 1rem; border-radius: 0.75rem; background: rgba(255,255,255,0.04); border: 0.0625rem solid {}; color: {}; font-size: 0.82rem; line-height: 1.5;", theme.ui_border, theme.ui_text_secondary)>
+                                <div style=format!(
+                                    "padding: 0.9rem 1rem; border-radius: 0.75rem; background: rgba(255,255,255,0.04); border: 0.0625rem solid {}; color: {}; font-size: {}; line-height: 1.5;",
+                                    theme.ui_border, theme.ui_text_secondary, SCENES_BODY_FONT_SIZE
+                                )>
                                     {move || t!(i18n, scenes.background_fit_live_preview_hint)}
                                 </div>
 
@@ -724,7 +826,10 @@ pub fn ScenesWindow(
                                         <input type="number" min="1" max="200"
                                             prop:value=move || vm.draft_columns.get()
                                             on:input=move |ev| vm.draft_columns.set(event_target_value(&ev))
-                                            style=format!("padding: 0.75rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.5rem;", theme.ui_bg_secondary, theme.ui_text_primary, theme.ui_border)
+                                            style=format!(
+                                                "padding: 0.75rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.5rem; font-size: {};",
+                                                theme.ui_bg_secondary, theme.ui_text_primary, theme.ui_border, SCENES_BODY_FONT_SIZE
+                                            )
                                         />
                                     </label>
                                     <label style=format!("color: {}; display: flex; flex-direction: column; gap: 0.45rem;", theme.ui_text_secondary)>
@@ -732,7 +837,10 @@ pub fn ScenesWindow(
                                         <input type="number" min="1" max="200"
                                             prop:value=move || vm.draft_rows.get()
                                             on:input=move |ev| vm.draft_rows.set(event_target_value(&ev))
-                                            style=format!("padding: 0.75rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.5rem;", theme.ui_bg_secondary, theme.ui_text_primary, theme.ui_border)
+                                            style=format!(
+                                                "padding: 0.75rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.5rem; font-size: {};",
+                                                theme.ui_bg_secondary, theme.ui_text_primary, theme.ui_border, SCENES_BODY_FONT_SIZE
+                                            )
                                         />
                                     </label>
                                 </div>
@@ -757,20 +865,32 @@ pub fn ScenesWindow(
                                                     vm.draft_background_scale.set(vm.clamp_background_scale(v));
                                                 }
                                             }
-                                            style=format!("width: 6rem; padding: 0.65rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.5rem;", theme.ui_bg_secondary, theme.ui_text_primary, theme.ui_border)
+                                            style=format!(
+                                                "width: 6rem; padding: 0.65rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.5rem; font-size: {};",
+                                                theme.ui_bg_secondary, theme.ui_text_primary, theme.ui_border, SCENES_BODY_FONT_SIZE
+                                            )
                                         />
                                     </div>
                                 </label>
 
                                 // Background position info
                                 <div style=format!("padding: 0.95rem 1rem; border-radius: 0.75rem; background: rgba(255,255,255,0.03); border: 0.0625rem solid {}; display: flex; flex-direction: column; gap: 0.55rem;", theme.ui_border)>
-                                    <div style=format!("color: {}; font-size: 0.9rem; font-weight: 700;", theme.ui_text_primary)>
+                                    <div style=format!(
+                                        "color: {}; font-size: {}; font-weight: 700;",
+                                        theme.ui_text_primary, SCENES_BODY_FONT_SIZE
+                                    )>
                                         {move || t!(i18n, scenes.background_position_label)}
                                     </div>
-                                    <div style=format!("color: {}; font-size: 0.82rem; line-height: 1.45;", theme.ui_text_secondary)>
+                                    <div style=format!(
+                                        "color: {}; font-size: {}; line-height: 1.45;",
+                                        theme.ui_text_secondary, SCENES_BODY_FONT_SIZE
+                                    )>
                                         {move || t!(i18n, scenes.background_fit_drag_hint)}
                                     </div>
-                                    <div style=format!("color: {}; font-size: 0.8rem;", theme.ui_text_muted)>
+                                    <div style=format!(
+                                        "color: {}; font-size: {};",
+                                        theme.ui_text_muted, SCENES_META_FONT_SIZE
+                                    )>
                                         {move || format!("X: {:.0}px | Y: {:.0}px", vm.draft_background_offset_x.get(), vm.draft_background_offset_y.get())}
                                     </div>
                                 </div>
@@ -795,7 +915,10 @@ pub fn ScenesWindow(
                                                     vm.draft_background_rotation_deg.set(vm.clamp_background_rotation(v));
                                                 }
                                             }
-                                            style=format!("width: 6rem; padding: 0.65rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.5rem;", theme.ui_bg_secondary, theme.ui_text_primary, theme.ui_border)
+                                            style=format!(
+                                                "width: 6rem; padding: 0.65rem; background: {}; color: {}; border: 0.0625rem solid {}; border-radius: 0.5rem; font-size: {};",
+                                                theme.ui_bg_secondary, theme.ui_text_primary, theme.ui_border, SCENES_BODY_FONT_SIZE
+                                            )
                                         />
                                     </div>
                                 </label>
@@ -804,13 +927,19 @@ pub fn ScenesWindow(
                                 <div style=format!("margin-top: auto; display: flex; gap: 0.75rem; justify-content: flex-end; padding-top: 0.5rem; border-top: 0.0625rem solid {}; flex-wrap: wrap;", theme.ui_border)>
                                     <button type="button"
                                         on:click=move |_| vm.reset_background_fit()
-                                        style=format!("padding: 0.75rem 1rem; background: {}; color: {}; border: none; border-radius: 0.5rem; cursor: pointer;", theme.ui_bg_secondary, theme.ui_text_primary)
+                                        style=format!(
+                                            "padding: 0.75rem 1rem; background: {}; color: {}; border: none; border-radius: 0.5rem; cursor: pointer; font-size: {};",
+                                            theme.ui_bg_secondary, theme.ui_text_primary, SCENES_BUTTON_FONT_SIZE
+                                        )
                                     >
                                         {move || t!(i18n, scenes.background_reset_fit_button)}
                                     </button>
                                     <button type="button"
                                         on:click=move |_| vm.close_background_fit_editor()
-                                        style=format!("padding: 0.75rem 1rem; background: {}; color: {}; border: none; border-radius: 0.5rem; cursor: pointer;", theme.ui_bg_secondary, theme.ui_text_primary)
+                                        style=format!(
+                                            "padding: 0.75rem 1rem; background: {}; color: {}; border: none; border-radius: 0.5rem; cursor: pointer; font-size: {};",
+                                            theme.ui_bg_secondary, theme.ui_text_primary, SCENES_BUTTON_FONT_SIZE
+                                        )
                                     >
                                         {move || t!(i18n, scenes.background_fit_modal_close_button)}
                                     </button>
@@ -819,7 +948,10 @@ pub fn ScenesWindow(
                                             save_scene(());
                                             vm.close_background_fit_editor();
                                         }
-                                        style=format!("padding: 0.75rem 1rem; background: {}; color: {}; border: none; border-radius: 0.5rem; cursor: pointer; font-weight: 700;", theme.ui_button_primary, theme.ui_text_primary)
+                                        style=format!(
+                                            "padding: 0.75rem 1rem; background: {}; color: {}; border: none; border-radius: 0.5rem; cursor: pointer; font-weight: 700; font-size: {};",
+                                            theme.ui_button_primary, theme.ui_text_primary, SCENES_BUTTON_FONT_SIZE
+                                        )
                                     >
                                         {move || t!(i18n, scenes.background_fit_modal_save_button)}
                                     </button>

@@ -3,11 +3,16 @@ use crate::config::Theme;
 use crate::i18n::i18n::{t_string, use_i18n};
 use leptos::prelude::*;
 
+const MENU_BUTTON_FONT_SIZE: &str = "clamp(0.875rem, 0.84rem + 0.16vw, 1rem)";
+const MENU_META_FONT_SIZE: &str = "clamp(0.72rem, 0.7rem + 0.12vw, 0.82rem)";
+const MENU_TOGGLE_FONT_SIZE: &str = "clamp(1rem, 0.95rem + 0.28vw, 1.2rem)";
+
 #[component]
 pub fn SideMenu(
     #[prop(into)] is_open: RwSignal<bool>,
     on_chat_open: Callback<()>,
     on_scenes_open: Callback<()>,
+    on_tokens_open: Callback<()>,
     on_settings_open: Callback<()>,
     on_statistics_open: Callback<()>,
     on_voting_open: Callback<()>,
@@ -35,8 +40,8 @@ pub fn SideMenu(
                 style=format!(
                     "position: fixed; top: 1.25rem; left: 1.25rem; z-index: 1000; \
                      padding: 0.625rem 0.9375rem; background: {}; color: {}; border: none; \
-                     border-radius: 0.3125rem; cursor: pointer; font-size: 1.125rem;",
-                    button_bg, theme.ui_text_primary
+                     border-radius: 0.625rem; cursor: pointer; font-size: {};",
+                    button_bg, theme.ui_text_primary, MENU_TOGGLE_FONT_SIZE
                 )
             >
                 "☰"
@@ -70,8 +75,8 @@ pub fn SideMenu(
                             format!(
                                 "padding: 0.75rem; background: {}; color: {}; border: none; border-radius: 0.3125rem; \
                                  cursor: pointer; display: flex; justify-content: space-between; align-items: center; \
-                                 transition: background 0.2s; min-width: 0;",
-                                bg, theme.ui_text_primary
+                                 transition: background 0.2s; min-width: 0; font-size: {};",
+                                bg, theme.ui_text_primary, MENU_BUTTON_FONT_SIZE
                             )
                         }
                         onmouseover=move || if has_chat_notification.get() {
@@ -95,7 +100,10 @@ pub fn SideMenu(
                         </span>
                         {move || if !vm.is_open.get() {
                             view! {
-                                <span style=format!("color: {}; font-size: 0.75rem; margin-left: 0.5rem;", theme.ui_text_secondary)>
+                                <span style=format!(
+                                    "color: {}; font-size: {}; margin-left: 0.5rem;",
+                                    theme.ui_text_secondary, MENU_META_FONT_SIZE
+                                )>
                                     {if has_chat_notification.get() && chat_notification_count.get() > 0 {
                                         chat_notification_count.get().to_string()
                                     } else {
@@ -112,8 +120,8 @@ pub fn SideMenu(
                         style=format!(
                             "padding: 0.75rem; background: {}; color: {}; border: none; border-radius: 0.3125rem; \
                              cursor: pointer; display: flex; justify-content: space-between; align-items: center; \
-                             transition: background 0.2s; min-width: 0;",
-                            button_bg, theme.ui_text_primary
+                             transition: background 0.2s; min-width: 0; font-size: {};",
+                            button_bg, theme.ui_text_primary, MENU_BUTTON_FONT_SIZE
                         )
                         onmouseover=format!("this.style.background='{}'", button_hover)
                         onmouseout=format!("this.style.background='{}'", button_bg)
@@ -128,8 +136,43 @@ pub fn SideMenu(
                         </span>
                         {move || if !vm.is_open.get() {
                             view! {
-                                <span style=format!("color: {}; font-size: 0.75rem; margin-left: 0.5rem;", theme.ui_text_secondary)>
+                                <span style=format!(
+                                    "color: {}; font-size: {}; margin-left: 0.5rem;",
+                                    theme.ui_text_secondary, MENU_META_FONT_SIZE
+                                )>
                                     {t_string!(i18n, menu.hotkey_scenes)}
+                                </span>
+                            }.into_any()
+                        } else { ().into_any() }}
+                    </button>
+
+                    // Tokens button
+                    <button
+                        on:click=move |_| on_tokens_open.run(())
+                        style=format!(
+                            "padding: 0.75rem; background: {}; color: {}; border: none; border-radius: 0.3125rem; \
+                             cursor: pointer; display: flex; justify-content: space-between; align-items: center; \
+                             transition: background 0.2s; min-width: 0; font-size: {};",
+                            button_bg, theme.ui_text_primary, MENU_BUTTON_FONT_SIZE
+                        )
+                        onmouseover=format!("this.style.background='{}'", button_hover)
+                        onmouseout=format!("this.style.background='{}'", button_bg)
+                    >
+                        <span style=move || if vm.is_open.get() {
+                            "white-space: nowrap;".to_string()
+                        } else {
+                            "white-space: nowrap; overflow: hidden; text-overflow: ellipsis;".to_string()
+                        }>
+                            {"🧿 "}
+                            {move || if vm.is_open.get() { t_string!(i18n, menu.tokens) } else { "" }}
+                        </span>
+                        {move || if !vm.is_open.get() {
+                            view! {
+                                <span style=format!(
+                                    "color: {}; font-size: {}; margin-left: 0.5rem;",
+                                    theme.ui_text_secondary, MENU_META_FONT_SIZE
+                                )>
+                                    {t_string!(i18n, menu.hotkey_tokens)}
                                 </span>
                             }.into_any()
                         } else { ().into_any() }}
@@ -143,8 +186,8 @@ pub fn SideMenu(
                             format!(
                                 "padding: 0.75rem; background: {}; color: {}; border: none; border-radius: 0.3125rem; \
                                  cursor: pointer; display: flex; justify-content: space-between; align-items: center; \
-                                 transition: background 0.2s; min-width: 0;",
-                                bg, theme.ui_text_primary
+                                 transition: background 0.2s; min-width: 0; font-size: {};",
+                                bg, theme.ui_text_primary, MENU_BUTTON_FONT_SIZE
                             )
                         }
                         onmouseover=move || if has_statistics_notification.get() {
@@ -168,7 +211,10 @@ pub fn SideMenu(
                         </span>
                         {move || if !vm.is_open.get() {
                             view! {
-                                <span style=format!("color: {}; font-size: 0.75rem; margin-left: 0.5rem;", theme.ui_text_secondary)>
+                                <span style=format!(
+                                    "color: {}; font-size: {}; margin-left: 0.5rem;",
+                                    theme.ui_text_secondary, MENU_META_FONT_SIZE
+                                )>
                                     {if has_statistics_notification.get() && notification_count.get() > 0 {
                                         notification_count.get().to_string()
                                     } else {
@@ -185,8 +231,8 @@ pub fn SideMenu(
                         style=format!(
                             "padding: 0.75rem; background: {}; color: {}; border: none; border-radius: 0.3125rem; \
                              cursor: pointer; display: flex; justify-content: space-between; align-items: center; \
-                             transition: background 0.2s; min-width: 0;",
-                            button_bg, theme.ui_text_primary
+                             transition: background 0.2s; min-width: 0; font-size: {};",
+                            button_bg, theme.ui_text_primary, MENU_BUTTON_FONT_SIZE
                         )
                         onmouseover=format!("this.style.background='{}'", button_hover)
                         onmouseout=format!("this.style.background='{}'", button_bg)
@@ -201,7 +247,10 @@ pub fn SideMenu(
                         </span>
                         {move || if !vm.is_open.get() {
                             view! {
-                                <span style=format!("color: {}; font-size: 0.75rem; margin-left: 0.5rem;", theme.ui_text_secondary)>
+                                <span style=format!(
+                                    "color: {}; font-size: {}; margin-left: 0.5rem;",
+                                    theme.ui_text_secondary, MENU_META_FONT_SIZE
+                                )>
                                     {t_string!(i18n, menu.hotkey_statistics)}
                                 </span>
                             }.into_any()
@@ -214,8 +263,8 @@ pub fn SideMenu(
                         style=format!(
                             "padding: 0.75rem; background: {}; color: {}; border: none; border-radius: 0.3125rem; \
                              cursor: pointer; display: flex; justify-content: space-between; align-items: center; \
-                             transition: background 0.2s; min-width: 0;",
-                            button_bg, theme.ui_text_primary
+                             transition: background 0.2s; min-width: 0; font-size: {};",
+                            button_bg, theme.ui_text_primary, MENU_BUTTON_FONT_SIZE
                         )
                         onmouseover=format!("this.style.background='{}'", button_hover)
                         onmouseout=format!("this.style.background='{}'", button_bg)

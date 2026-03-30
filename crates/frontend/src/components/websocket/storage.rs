@@ -8,9 +8,10 @@ use web_sys::wasm_bindgen::{JsCast, JsValue};
 use web_sys::{Blob, Url};
 
 const DATABASE_NAME: &str = "dnd_vtt";
-const DATABASE_VERSION: u32 = 1;
+const DATABASE_VERSION: u32 = 2;
 const ROOM_STATES_STORE: &str = "room_states";
 const FILES_STORE: &str = "files";
+const TOKEN_LIBRARY_STORE: &str = "token_library";
 
 type StorageResult<T> = Result<T, String>;
 
@@ -26,11 +27,23 @@ pub struct StoredFile {
     pub blob: Blob,
 }
 
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub struct StoredTokenLibraryItem {
+    pub key: String,
+    pub room_name: String,
+    pub id: String,
+    pub name: String,
+    pub image: FileRef,
+    pub width_cells: u16,
+    pub height_cells: u16,
+}
+
 async fn open_database() -> StorageResult<Rexie> {
     Rexie::builder(DATABASE_NAME)
         .version(DATABASE_VERSION)
         .add_object_store(ObjectStore::new(ROOM_STATES_STORE).key_path("room_name"))
         .add_object_store(ObjectStore::new(FILES_STORE).key_path("hash"))
+        .add_object_store(ObjectStore::new(TOKEN_LIBRARY_STORE).key_path("key"))
         .build()
         .await
         .map_err(|error| format!("failed to open IndexedDB: {error:?}"))
@@ -92,6 +105,99 @@ pub async fn save_state(room_name: &str, state: &RoomState) -> StorageResult<()>
         .done()
         .await
         .map_err(|error| format!("write transaction failed: {error:?}"))?;
+
+    Ok(())
+}
+
+pub fn token_library_key(room_name: &str, token_id: &str) -> String {
+    format!("{room_name}:{token_id}")
+}
+
+fn sort_token_library_items(items: &mut [StoredTokenLibraryItem]) {
+    items.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| left.id.cmp(&right.id))
+    });
+}
+
+pub async fn load_token_library(room_name: &str) -> StorageResult<Vec<StoredTokenLibraryItem>> {
+    let database = open_database().await?;
+    let transaction = database
+        .transaction(&[TOKEN_LIBRARY_STORE], TransactionMode::ReadOnly)
+        .map_err(|error| format!("failed to open token library read transaction: {error:?}"))?;
+    let store = transaction
+        .store(TOKEN_LIBRARY_STORE)
+        .map_err(|error| format!("failed to open token_library store: {error:?}"))?;
+
+    let values = store
+        .get_all(None, None)
+        .await
+        .map_err(|error| format!("failed to read token library from IndexedDB: {error:?}"))?;
+
+    transaction
+        .done()
+        .await
+        .map_err(|error| format!("token library read transaction failed: {error:?}"))?;
+
+    let mut items = values
+        .into_iter()
+        .map(|value| {
+            serde_wasm_bindgen::from_value::<StoredTokenLibraryItem>(value)
+                .map_err(|error| format!("failed to decode token library item: {error}"))
+        })
+        .collect::<StorageResult<Vec<_>>>()?;
+    items.retain(|item| item.room_name == room_name);
+    sort_token_library_items(&mut items);
+    Ok(items)
+}
+
+pub async fn save_token_library_item(item: &StoredTokenLibraryItem) -> StorageResult<()> {
+    let database = open_database().await?;
+    let transaction = database
+        .transaction(&[TOKEN_LIBRARY_STORE], TransactionMode::ReadWrite)
+        .map_err(|error| format!("failed to open token library write transaction: {error:?}"))?;
+    let store = transaction
+        .store(TOKEN_LIBRARY_STORE)
+        .map_err(|error| format!("failed to open token_library store: {error:?}"))?;
+
+    let value = serde_wasm_bindgen::to_value(item)
+        .map_err(|error| format!("failed to encode token library item for IndexedDB: {error}"))?;
+
+    store
+        .put(&value, None)
+        .await
+        .map_err(|error| format!("failed to save token library item to IndexedDB: {error:?}"))?;
+
+    transaction
+        .done()
+        .await
+        .map_err(|error| format!("token library write transaction failed: {error:?}"))?;
+
+    Ok(())
+}
+
+pub async fn delete_token_library_item(room_name: &str, token_id: &str) -> StorageResult<()> {
+    let database = open_database().await?;
+    let transaction = database
+        .transaction(&[TOKEN_LIBRARY_STORE], TransactionMode::ReadWrite)
+        .map_err(|error| format!("failed to open token library delete transaction: {error:?}"))?;
+    let store = transaction
+        .store(TOKEN_LIBRARY_STORE)
+        .map_err(|error| format!("failed to open token_library store: {error:?}"))?;
+
+    store
+        .delete(JsValue::from_str(&token_library_key(room_name, token_id)))
+        .await
+        .map_err(|error| {
+            format!("failed to delete token library item from IndexedDB: {error:?}")
+        })?;
+
+    transaction
+        .done()
+        .await
+        .map_err(|error| format!("token library delete transaction failed: {error:?}"))?;
 
     Ok(())
 }
@@ -268,5 +374,50 @@ pub async fn save_file(record: &StoredFile) -> StorageResult<()> {
 pub fn revoke_file_urls(urls: impl IntoIterator<Item = String>) {
     for url in urls {
         let _ = Url::revoke_object_url(&url);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_library_key_is_namespaced_by_room() {
+        assert_eq!(token_library_key("room-a", "token-1"), "room-a:token-1");
+    }
+
+    #[test]
+    fn token_library_items_are_sorted_case_insensitively() {
+        let file = FileRef {
+            hash: "hash".to_string(),
+            mime_type: "image/png".to_string(),
+            file_name: "token.png".to_string(),
+            size: 42,
+        };
+        let mut items = vec![
+            StoredTokenLibraryItem {
+                key: "room:t2".to_string(),
+                room_name: "room".to_string(),
+                id: "t2".to_string(),
+                name: "zebra".to_string(),
+                image: file.clone(),
+                width_cells: 1,
+                height_cells: 1,
+            },
+            StoredTokenLibraryItem {
+                key: "room:t1".to_string(),
+                room_name: "room".to_string(),
+                id: "t1".to_string(),
+                name: "Alpha".to_string(),
+                image: file,
+                width_cells: 1,
+                height_cells: 1,
+            },
+        ];
+
+        sort_token_library_items(&mut items);
+
+        assert_eq!(items[0].id, "t1");
+        assert_eq!(items[1].id, "t2");
     }
 }

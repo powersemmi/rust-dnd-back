@@ -8,8 +8,8 @@ use leptos::task::spawn_local;
 use leptos::wasm_bindgen::JsCast;
 use sha2::{Digest, Sha256};
 use shared::events::{
-    ClientEvent, FileAbortPayload, FileAnnouncePayload, FileChunkPayload, FileRef,
-    FileRequestPayload, RoomState, Scene,
+    ChatMessagePayload, ClientEvent, FileAbortPayload, FileAnnouncePayload, FileChunkPayload,
+    FileRef, FileRequestPayload, RoomState, Scene,
 };
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -21,6 +21,7 @@ const MAX_FILE_SIZE_BYTES: u64 = 50 * 1024 * 1024;
 const CHUNK_SIZE_BYTES: usize = 48 * 1024;
 const OUTGOING_CONCURRENCY_LIMIT: usize = 3;
 const REQUEST_RETRY_DELAY_MS: u32 = 10_000;
+pub const CHAT_FILE_INPUT_ACCEPT: &str = "image/png,image/jpeg,image/webp,image/gif,application/pdf,application/xml,text/xml,application/json,application/zip,application/x-zip-compressed";
 const SUPPORTED_MIME_TYPES: &[&str] = &[
     "image/png",
     "image/jpeg",
@@ -167,6 +168,40 @@ impl FileTransferState {
             if let Some(background) = &scene.background {
                 known_files.insert(background.hash.clone(), background.clone());
             }
+            for token in &scene.tokens {
+                known_files.insert(token.image.hash.clone(), token.image.clone());
+            }
+        }
+    }
+
+    pub fn hydrate_local_files(&self, files: &[FileRef]) {
+        for file in files {
+            self.known_files
+                .borrow_mut()
+                .insert(file.hash.clone(), file.clone());
+
+            if self.file_urls.get_untracked().contains_key(&file.hash) {
+                continue;
+            }
+
+            let this = self.clone();
+            let file = file.clone();
+            spawn_local(async move {
+                match storage::load_file(&file.hash).await {
+                    Ok(Some(record)) => {
+                        this.ensure_file_url_from_blob(&record.file.hash, &record.blob);
+                        this.set_status(&record.file.hash, FileTransferStatus::complete());
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        log!(
+                            "Failed to hydrate local file '{}' from IndexedDB: {}",
+                            file.hash,
+                            error
+                        );
+                    }
+                }
+            });
         }
     }
 
@@ -231,6 +266,47 @@ impl FileTransferState {
                         room_name,
                         error
                     ),
+                }
+            });
+        }
+    }
+
+    pub fn reconcile_chat_attachments(&self, messages: &[ChatMessagePayload]) {
+        for file in collect_chat_files(messages) {
+            self.known_files
+                .borrow_mut()
+                .insert(file.hash.clone(), file.clone());
+
+            let has_url = self.file_urls.get_untracked().contains_key(&file.hash);
+            let is_request_in_flight = self
+                .transfer_statuses
+                .get_untracked()
+                .get(&file.hash)
+                .is_some_and(|status| {
+                    matches!(
+                        status.stage,
+                        FileTransferStage::Requested | FileTransferStage::Receiving
+                    )
+                });
+            if has_url || is_request_in_flight {
+                continue;
+            }
+
+            let this = self.clone();
+            spawn_local(async move {
+                match storage::load_file(&file.hash).await {
+                    Ok(Some(record)) => {
+                        this.ensure_file_url_from_blob(&record.file.hash, &record.blob);
+                        this.set_status(&record.file.hash, FileTransferStatus::complete());
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        log!(
+                            "Failed to hydrate chat attachment '{}' from IndexedDB: {}",
+                            file.hash,
+                            error
+                        );
+                    }
                 }
             });
         }
@@ -424,6 +500,17 @@ impl FileTransferState {
         username: String,
         ws_sender: Option<WsSender>,
     ) -> Result<FileRef, String> {
+        self.import_browser_file_with_announce(browser_file, username, ws_sender, true)
+            .await
+    }
+
+    pub async fn import_browser_file_with_announce(
+        &self,
+        browser_file: File,
+        username: String,
+        ws_sender: Option<WsSender>,
+        announce_immediately: bool,
+    ) -> Result<FileRef, String> {
         validate_browser_file(&browser_file)?;
 
         let blob: Blob = browser_file
@@ -456,9 +543,26 @@ impl FileTransferState {
         }
 
         self.set_status(&file_ref.hash, FileTransferStatus::complete());
-        self.announce_local_file(file_ref.clone(), username, ws_sender, false);
+        if announce_immediately {
+            self.announce_local_file(file_ref.clone(), username, ws_sender, false);
+        }
 
         Ok(file_ref)
+    }
+
+    pub fn announce_local_files(
+        &self,
+        files: &[FileRef],
+        username: String,
+        ws_sender: Option<WsSender>,
+    ) {
+        for file in files {
+            self.announce_local_file(file.clone(), username.clone(), ws_sender.clone(), false);
+        }
+    }
+
+    pub fn request_file(&self, file: FileRef, username: String, ws_sender: Option<WsSender>) {
+        self.request_file_if_needed(file, username, ws_sender);
     }
 
     fn announce_local_file(
@@ -742,6 +846,27 @@ fn collect_scene_files(scenes: &[Scene]) -> Vec<FileRef> {
             && seen.insert(background.hash.clone())
         {
             files.push(background.clone());
+        }
+
+        for token in &scene.tokens {
+            if seen.insert(token.image.hash.clone()) {
+                files.push(token.image.clone());
+            }
+        }
+    }
+
+    files
+}
+
+fn collect_chat_files(messages: &[ChatMessagePayload]) -> Vec<FileRef> {
+    let mut seen = HashSet::new();
+    let mut files = Vec::new();
+
+    for message in messages {
+        for attachment in &message.attachments {
+            if seen.insert(attachment.hash.clone()) {
+                files.push(attachment.clone());
+            }
         }
     }
 

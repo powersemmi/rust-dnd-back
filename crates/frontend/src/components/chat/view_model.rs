@@ -1,48 +1,85 @@
 use crate::components::websocket::WsSender;
 use leptos::prelude::*;
-use shared::events::{ChatMessagePayload, ClientEvent};
+use shared::events::{ChatMessagePayload, ClientEvent, FileRef};
 
 /// Reactive state and logic for the chat window.
 #[derive(Clone, Copy)]
 pub struct ChatViewModel {
     pub input_text: RwSignal<String>,
+    pub pending_attachments: RwSignal<Vec<FileRef>>,
+    pub error_message: RwSignal<Option<String>>,
 }
 
 impl ChatViewModel {
     pub fn new() -> Self {
         Self {
             input_text: RwSignal::new(String::new()),
+            pending_attachments: RwSignal::new(Vec::new()),
+            error_message: RwSignal::new(None),
         }
     }
 
     /// Returns true if the current input has content that can be sent.
     pub fn can_send(&self) -> bool {
-        !self.input_text.get_untracked().is_empty()
+        !self.input_text.get_untracked().trim().is_empty()
+            || !self.pending_attachments.get_untracked().is_empty()
     }
 
-    /// Reads and clears the input text, returning the previous value.
-    pub fn take_input(&self) -> String {
-        let text = self.input_text.get_untracked();
+    pub fn add_attachment(&self, file: FileRef) {
+        self.pending_attachments.update(|attachments| {
+            if attachments
+                .iter()
+                .any(|existing| existing.hash == file.hash)
+            {
+                return;
+            }
+            attachments.push(file);
+        });
+        self.error_message.set(None);
+    }
+
+    pub fn remove_attachment(&self, hash: &str) {
+        self.pending_attachments
+            .update(|attachments| attachments.retain(|file| file.hash != hash));
+    }
+
+    /// Reads and clears the current draft, returning text and attachments.
+    pub fn clear_draft(&self) {
         self.input_text.set(String::new());
-        text
+        self.pending_attachments.set(Vec::new());
+        self.error_message.set(None);
     }
 
     /// Sends the current message via WebSocket if non-empty.
     /// Returns `true` if a message was sent.
     pub fn send_message(&self, username: &str, ws_sender: ReadSignal<Option<WsSender>>) -> bool {
+        let Some(sender) = ws_sender.get_untracked() else {
+            self.error_message
+                .set(Some("WebSocket connection is not available".to_string()));
+            return false;
+        };
         if !self.can_send() {
             return false;
         }
-        let text = self.take_input();
+
+        let text = self.input_text.get_untracked().trim().to_string();
+        let attachments = self.pending_attachments.get_untracked();
         let msg = ChatMessagePayload {
             payload: text,
             username: username.to_string(),
+            attachments,
         };
-        if let Some(sender) = ws_sender.get_untracked() {
-            let _ = sender.try_send_event(ClientEvent::ChatMessage(msg));
-            return true;
+
+        match sender.try_send_event(ClientEvent::ChatMessage(msg)) {
+            Ok(()) => {
+                self.clear_draft();
+                true
+            }
+            Err(error) => {
+                self.error_message.set(Some(error));
+                false
+            }
         }
-        false
     }
 }
 
@@ -71,24 +108,35 @@ mod tests {
     }
 
     #[test]
-    fn take_input_clears_text() {
+    fn can_send_is_true_with_attachment_only() {
         let owner = Owner::new();
         owner.with(|| {
             let vm = ChatViewModel::new();
-            vm.input_text.set("test message".into());
-            let taken = vm.take_input();
-            assert_eq!(taken, "test message");
-            assert_eq!(vm.input_text.get_untracked(), "");
+            vm.add_attachment(FileRef {
+                hash: "hash".into(),
+                mime_type: "application/pdf".into(),
+                file_name: "sheet.pdf".into(),
+                size: 42,
+            });
+            assert!(vm.can_send());
         });
     }
 
     #[test]
-    fn take_input_on_empty_returns_empty() {
+    fn clear_draft_resets_text_and_attachments() {
         let owner = Owner::new();
         owner.with(|| {
             let vm = ChatViewModel::new();
-            let taken = vm.take_input();
-            assert_eq!(taken, "");
+            vm.input_text.set("test message".into());
+            vm.add_attachment(FileRef {
+                hash: "hash".into(),
+                mime_type: "application/pdf".into(),
+                file_name: "sheet.pdf".into(),
+                size: 42,
+            });
+            vm.clear_draft();
+            assert_eq!(vm.input_text.get_untracked(), "");
+            assert!(vm.pending_attachments.get_untracked().is_empty());
         });
     }
 }
