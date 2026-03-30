@@ -43,7 +43,7 @@ pub fn handle_chat_message(
         *last_synced_version.borrow_mut() = current_ver;
     }
 
-    storage::save_state(room_name, &room_state.borrow());
+    storage::save_state_in_background(room_name, &room_state.borrow());
 
     utils::log_event(
         state_events,

@@ -3,7 +3,7 @@ use gloo_net::websocket::Message;
 use leptos::logging::log;
 use leptos::prelude::*;
 use shared::events::{
-    ChatMessagePayload, ClientEvent, RoomState, SyncVersionPayload, VotingResultPayload,
+    ChatMessagePayload, ClientEvent, RoomState, Scene, SyncVersionPayload, VotingResultPayload,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -18,6 +18,8 @@ pub fn handle_hash_selection_voting_result(
     room_state: &Rc<RefCell<RoomState>>,
     room_name: &str,
     messages_signal: RwSignal<Vec<ChatMessagePayload>>,
+    scenes_signal: RwSignal<Vec<Scene>>,
+    active_scene_id_signal: RwSignal<Option<String>>,
     voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
     conflict_signal: RwSignal<Option<SyncConflict>>,
     tx: &WsSender,
@@ -64,8 +66,10 @@ pub fn handle_hash_selection_voting_result(
                         *room_state.borrow_mut() = chosen_state.clone();
 
                         messages_signal.set(chosen_state.chat_history.clone());
+                        scenes_signal.set(chosen_state.scenes.clone());
+                        active_scene_id_signal.set(chosen_state.active_scene_id.clone());
                         voting_results.set(chosen_state.voting_results.clone());
-                        storage::save_state(room_name, chosen_state);
+                        storage::save_state_in_background(room_name, chosen_state);
 
                         conflict_signal.set(None);
 

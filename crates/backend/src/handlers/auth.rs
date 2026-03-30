@@ -1,13 +1,18 @@
-use crate::AppState;
-use crate::config::get_auth_secret;
+use crate::config::get_secret;
 use crate::utils::crypto::{decrypt, encrypt};
 use crate::utils::jwt::{AuthUser, create_jwt};
-use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use crate::{AppError, AppResult, AppState};
+use axum::{Json, extract::State, response::IntoResponse};
 use serde_json::json;
 use shared::auth::{LoginRequest, LoginResponse, RegisterRequest, RegisterResponse};
 use sqlx::Error;
 use std::sync::Arc;
 use totp_rs::{Algorithm, Secret, TOTP};
+
+const TOTP_DIGITS: usize = 6;
+const TOTP_SKEW: u8 = 1;
+const TOTP_STEP_SECONDS: u64 = 30;
+const TOTP_ISSUER: &str = "DnD-VTT";
 
 #[utoipa::path(
     post,
@@ -23,45 +28,34 @@ use totp_rs::{Algorithm, Secret, TOTP};
 pub async fn register(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<RegisterRequest>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    // 1. Генерируем секретный ключ
+) -> AppResult<impl IntoResponse> {
+    let username = payload.username;
     let secret = Secret::generate_secret();
-    let secret_bytes = secret.to_bytes().unwrap();
-    // Конвертируем в String для сохранения в БД (обычно это Base32 строка)
+    let secret_bytes = secret.to_bytes().map_err(|error| {
+        AppError::internal(format!(
+            "Failed to serialize generated TOTP secret: {error}"
+        ))
+    })?;
     let secret_str = secret.to_encoded().to_string();
 
-    // 2. Создаем объект TOTP для генерации QR
-    let totp = TOTP::new(
-        Algorithm::SHA1,
-        6,
-        1,
-        30,
-        secret_bytes,
-        Some("DnD-VTT".to_string()), // Issuer (название приложения в телефоне)
-        payload.username.clone(),    // Account name (логин юзера в телефоне)
-    )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    // 3. Генерируем QR-код в Base64 (png)
+    let totp = build_totp(&secret_bytes, &username)?;
     let qr_code = totp
         .get_qr_base64()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|error| AppError::internal(format!("Failed to generate QR code: {error}")))?;
 
-    let encrypted_secret = encrypt(&secret_str, get_auth_secret())
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let encrypted_secret = encrypt(&secret_str, get_secret("AUTH_SECRET"))
+        .map_err(|error| AppError::internal(format!("Failed to encrypt TOTP secret: {error}")))?;
 
-    // 4. Сохраняем пользователя в БД
-    // ВАЖНО: В реальном проекте секрет лучше шифровать перед записью в БД
     let result = sqlx::query!(
         r#"
         INSERT INTO users (username, totp_secret)
         VALUES ($1, $2)
         RETURNING id
         "#,
-        payload.username,
+        username,
         encrypted_secret
     )
-    .fetch_one(state.get_pg_pool())
+    .fetch_one(&state.pg_pool)
     .await;
 
     match result {
@@ -70,9 +64,9 @@ pub async fn register(
             message: "User created. Scan this QR code with Google Authenticator app.".to_string(),
         })),
         Err(Error::Database(db_err)) if db_err.is_unique_violation() => {
-            Err((StatusCode::CONFLICT, "Username already exists".to_string()))
+            Err(AppError::conflict("Username already exists"))
         }
-        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+        Err(error) => Err(AppError::internal(error.to_string())),
     }
 }
 
@@ -90,65 +84,35 @@ pub async fn register(
 pub async fn login(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<LoginRequest>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    // 1. Ищем пользователя и его секрет
+) -> AppResult<impl IntoResponse> {
+    let username = payload.username;
+    let code = payload.code;
+
     let user = sqlx::query!(
         "SELECT id, totp_secret FROM users WHERE username = $1",
-        payload.username
+        &username
     )
-    .fetch_optional(state.get_pg_pool())
+    .fetch_optional(&state.pg_pool)
     .await
-    .map_err(|e: Error| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(|error| AppError::internal(error.to_string()))?;
 
     let user = match user {
-        Some(u) => u,
-        None => return Err((StatusCode::UNAUTHORIZED, "User not found".to_string())),
+        Some(user) => user,
+        None => return Err(AppError::unauthorized("User not found")),
     };
 
-    let secret = decrypt(&user.totp_secret, get_auth_secret()).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Crypto error: {}", e),
-        )
-    })?;
+    let secret = decrypt(&user.totp_secret, get_secret("AUTH_SECRET"))
+        .map_err(|error| AppError::internal(format!("Crypto error: {error}")))?;
+    let secret_bytes = Secret::Encoded(secret)
+        .to_bytes()
+        .map_err(|error| AppError::internal(format!("Secret decode error: {error}")))?;
 
-    let secret = Secret::Encoded(secret).to_bytes().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Secret decode error: {}", e),
-        )
-    })?;
-
-    let totp = TOTP::new(
-        Algorithm::SHA1,
-        6,
-        1,
-        30,
-        secret,
-        Some("DnD-App".to_string()),
-        payload.username.clone(),
-    )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    // 3. Проверяем код
-    // check_current вернет true, если код валиден прямо сейчас
-    let is_valid = totp
-        .check_current(&payload.code)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    if is_valid {
-        let token = create_jwt(user.id, payload.username).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Token creation failed: {}", e),
-            )
-        })?;
+    if verify_totp_code(&secret_bytes, &username, &code)? {
+        let token = create_jwt(user.id, username)
+            .map_err(|error| AppError::internal(format!("Token creation failed: {error}")))?;
         Ok(Json(LoginResponse { token }))
     } else {
-        Err((
-            StatusCode::UNAUTHORIZED,
-            "Invalid authenticator code".to_string(),
-        ))
+        Err(AppError::unauthorized("Invalid authenticator code"))
     }
 }
 
@@ -183,14 +147,60 @@ pub async fn get_me(auth_user: AuthUser) -> impl IntoResponse {
         (status = 401, description = "Токен невалиден или истёк")
     )
 )]
-pub async fn refresh_token(auth_user: AuthUser) -> Result<impl IntoResponse, (StatusCode, String)> {
-    // Создаём новый токен для того же пользователя
-    let new_token = create_jwt(auth_user.user_id, auth_user.username).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Token creation failed: {}", e),
-        )
-    })?;
+pub async fn refresh_token(auth_user: AuthUser) -> AppResult<impl IntoResponse> {
+    let new_token = create_jwt(auth_user.user_id, auth_user.username)
+        .map_err(|error| AppError::internal(format!("Token creation failed: {error}")))?;
 
     Ok(Json(LoginResponse { token: new_token }))
+}
+
+fn build_totp(secret_bytes: &[u8], username: &str) -> AppResult<TOTP> {
+    TOTP::new(
+        Algorithm::SHA1,
+        TOTP_DIGITS,
+        TOTP_SKEW,
+        TOTP_STEP_SECONDS,
+        secret_bytes.to_vec(),
+        Some(TOTP_ISSUER.to_string()),
+        username.to_string(),
+    )
+    .map_err(|error| AppError::internal(format!("Failed to build TOTP: {error}")))
+}
+
+pub(crate) fn verify_totp_code(secret_bytes: &[u8], username: &str, code: &str) -> AppResult<bool> {
+    let totp = build_totp(secret_bytes, username)?;
+    totp.check_current(code)
+        .map_err(|error| AppError::internal(format!("Failed to validate TOTP code: {error}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_totp, verify_totp_code};
+    use totp_rs::Secret;
+
+    #[test]
+    fn verify_totp_accepts_current_code() {
+        let secret = Secret::generate_secret();
+        let secret_bytes = secret.to_bytes().expect("secret generation must succeed");
+        let totp = build_totp(&secret_bytes, "alice").expect("totp must be created");
+        let code = totp
+            .generate_current()
+            .expect("code generation must succeed");
+
+        let is_valid =
+            verify_totp_code(&secret_bytes, "alice", &code).expect("verification must succeed");
+
+        assert!(is_valid);
+    }
+
+    #[test]
+    fn verify_totp_rejects_invalid_code() {
+        let secret = Secret::generate_secret();
+        let secret_bytes = secret.to_bytes().expect("secret generation must succeed");
+
+        let is_valid =
+            verify_totp_code(&secret_bytes, "alice", "000000").expect("verification must succeed");
+
+        assert!(!is_valid);
+    }
 }

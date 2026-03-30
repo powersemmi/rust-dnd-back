@@ -1,8 +1,9 @@
 use super::voting::{VotingActive, VotingState};
-use super::websocket::{ConflictType, SyncConflict, WsSender};
+use super::websocket::{ConflictType, SyncConflict, WsSender, delete_state, move_state};
 use crate::config::Theme;
 use crate::i18n::i18n::{t_string, use_i18n};
 use leptos::prelude::*;
+use leptos::task::spawn_local;
 use shared::events::voting::{VotingOption, VotingStartPayload, VotingType};
 use std::collections::{HashMap, HashSet};
 
@@ -132,25 +133,20 @@ pub fn ConflictResolver(
                                         on:click=move |_| {
                                             let new_room = new_room_input.get();
                                             if !new_room.is_empty() {
-                                                // Сохраняем текущий стейт в localStorage для новой комнаты
-                                                if let Some(window) = web_sys::window() {
-                                                    if let Ok(Some(storage)) = window.local_storage() {
-                                                        let old_room = current_room.get();
-                                                        // Копируем стейт из старой комнаты в новую
-                                                        if let Ok(Some(old_state_json)) =
-                                                            storage.get_item(&format!("room_state:{}", old_room))
-                                                        {
-                                                            let _ =
-                                                                storage.set_item(&format!("room_state:{}", new_room), &old_state_json);
-                                                            // Удаляем стейт старой комнаты
-                                                            let _ = storage.remove_item(&format!("room_state:{}", old_room));
-                                                        }
+                                                let old_room = current_room.get();
+                                                spawn_local(async move {
+                                                    if let Err(error) = move_state(&old_room, &new_room).await {
+                                                        leptos::logging::log!(
+                                                            "Failed to move IndexedDB room state from '{}' to '{}': {}",
+                                                            old_room,
+                                                            new_room,
+                                                            error
+                                                        );
                                                     }
-                                                }
 
-                                                // Очищаем конфликт и переходим в новую комнату
-                                                conflict.set(None);
-                                                on_change_room_stored.with_value(|f| f.clone()(new_room));
+                                                    conflict.set(None);
+                                                    on_change_room_stored.with_value(|f| f.clone()(new_room));
+                                                });
                                             }
                                         }
                                     >
@@ -216,22 +212,25 @@ pub fn ConflictResolver(
                                             theme_stored.get_value().ui_button_danger, theme_stored.get_value().ui_text_primary
                                         )
                                         on:click=move |_| {
-                                            // Очищаем локальный стейт
-                                            if let Some(window) = web_sys::window() {
-                                                if let Ok(Some(storage)) = window.local_storage() {
-                                                    let room = current_room.get();
-                                                    let _ = storage.remove_item(&format!("room_state:{}", room));
-                                                    leptos::logging::log!("🗑️ Cleared local state for room: {}", room);
+                                            let room = current_room.get();
+                                            spawn_local(async move {
+                                                match delete_state(&room).await {
+                                                    Ok(()) => leptos::logging::log!(
+                                                        "🗑️ Cleared IndexedDB state for room: {}",
+                                                        room
+                                                    ),
+                                                    Err(error) => leptos::logging::log!(
+                                                        "Failed to clear IndexedDB state for room '{}': {}",
+                                                        room,
+                                                        error
+                                                    ),
                                                 }
-                                            }
 
-                                            leptos::logging::log!("🔄 Discarded local changes, starting conflict resolution...");
+                                                leptos::logging::log!("🔄 Discarded local changes, starting conflict resolution...");
 
-                                            // Закрываем окно конфликта
-                                            conflict.set(None);
-
-                                            // Запускаем процесс разрешения конфликта через сбор анонсов
-                                            on_start_conflict_resolution_stored.with_value(|f| f.clone()());
+                                                conflict.set(None);
+                                                on_start_conflict_resolution_stored.with_value(|f| f.clone()());
+                                            });
                                         }
                                     >
                                         {move || t_string!(i18n, conflict.discard_button)}

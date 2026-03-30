@@ -3,7 +3,7 @@ use crate::components::voting::VotingState;
 use crate::components::websocket::{WsSender, storage, types::SyncConflict, utils};
 use leptos::logging::log;
 use leptos::prelude::*;
-use shared::events::{ChatMessagePayload, RoomState, VotingResultPayload};
+use shared::events::{ChatMessagePayload, RoomState, Scene, VotingResultPayload};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -26,6 +26,8 @@ pub fn handle_voting_result(
     collected_snapshots: &Rc<RefCell<Vec<(String, RoomState)>>>,
     _is_collecting_snapshots: &Rc<RefCell<bool>>,
     messages_signal: RwSignal<Vec<ChatMessagePayload>>,
+    scenes_signal: RwSignal<Vec<Scene>>,
+    active_scene_id_signal: RwSignal<Option<String>>,
     conflict_signal: RwSignal<Option<SyncConflict>>,
 ) {
     log!("🎯 VOTING RESULT RECEIVED for: {}", payload.voting_id);
@@ -68,7 +70,7 @@ pub fn handle_voting_result(
     *local_version.borrow_mut() = current_ver;
     *last_synced_version.borrow_mut() = current_ver;
 
-    storage::save_state(room_name, &room_state.borrow());
+    storage::save_state_in_background(room_name, &room_state.borrow());
 
     utils::log_event(
         state_events,
@@ -98,6 +100,8 @@ pub fn handle_voting_result(
             room_state,
             room_name,
             messages_signal,
+            scenes_signal,
+            active_scene_id_signal,
             voting_results,
             conflict_signal,
             tx,

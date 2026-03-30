@@ -212,7 +212,7 @@ fn analyze_announces_and_resolve(
     }
 
     // Случай 3: Ищем большинство (>50%)
-    let majority_threshold = (total_announces + 1) / 2;
+    let majority_threshold = total_announces / 2;
     log!(
         "🔍 [DISCARD] Checking for majority: need > {} out of {}",
         majority_threshold,

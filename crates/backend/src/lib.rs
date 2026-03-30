@@ -1,10 +1,14 @@
 pub mod config;
 pub mod docs;
+pub mod error;
 pub mod handlers;
+pub mod http_rate_limit;
 pub mod state;
 pub mod utils;
+pub mod ws_policy;
 
 pub use config::Config;
+pub use error::{AppError, AppResult};
 use shared::events::{ChatMessagePayload, ClientEvent, MouseClickPayload};
 pub use state::AppState;
 use utoipa::{Modify, OpenApi};

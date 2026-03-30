@@ -1,14 +1,23 @@
 pub mod chat;
+pub mod file;
 pub mod mouse;
 pub mod params;
 pub mod room;
+pub mod scene;
 pub mod sync;
 pub mod voting;
 
 pub use crate::events::chat::ChatMessagePayload;
+pub use crate::events::file::{
+    FileAbortPayload, FileAnnouncePayload, FileChunkPayload, FileRequestPayload,
+};
 pub use crate::events::mouse::MouseClickPayload;
 pub use crate::events::params::Params;
 pub use crate::events::room::RoomState;
+pub use crate::events::scene::{
+    FileRef, Scene, SceneActivatePayload, SceneCreatePayload, SceneDeletePayload, SceneGrid,
+    SceneUpdatePayload,
+};
 pub use crate::events::sync::{
     SyncSnapshotPayload, SyncSnapshotRequestPayload, SyncVersionPayload,
 };
@@ -32,6 +41,22 @@ pub enum ClientEvent {
     MouseClickPayload(MouseClickPayload),
     #[serde(rename = "CHAT_MESSAGE")]
     ChatMessage(ChatMessagePayload),
+    #[serde(rename = "FILE_ANNOUNCE")]
+    FileAnnounce(FileAnnouncePayload),
+    #[serde(rename = "FILE_REQUEST")]
+    FileRequest(FileRequestPayload),
+    #[serde(rename = "FILE_CHUNK")]
+    FileChunk(FileChunkPayload),
+    #[serde(rename = "FILE_ABORT")]
+    FileAbort(FileAbortPayload),
+    #[serde(rename = "SCENE_CREATE")]
+    SceneCreate(SceneCreatePayload),
+    #[serde(rename = "SCENE_UPDATE")]
+    SceneUpdate(SceneUpdatePayload),
+    #[serde(rename = "SCENE_DELETE")]
+    SceneDelete(SceneDeletePayload),
+    #[serde(rename = "SCENE_ACTIVATE")]
+    SceneActivate(SceneActivatePayload),
 
     /// Sync events
     #[serde(rename = "SYNC_REQUEST")]
@@ -72,6 +97,14 @@ impl ClientEvent {
             ClientEvent::RoomState(p) => p.validate(),
             ClientEvent::MouseClickPayload(p) => p.validate(),
             ClientEvent::ChatMessage(p) => p.validate(),
+            ClientEvent::FileAnnounce(p) => p.validate(),
+            ClientEvent::FileRequest(p) => p.validate(),
+            ClientEvent::FileChunk(p) => p.validate(),
+            ClientEvent::FileAbort(p) => p.validate(),
+            ClientEvent::SceneCreate(p) => p.validate(),
+            ClientEvent::SceneUpdate(p) => p.validate(),
+            ClientEvent::SceneDelete(p) => p.validate(),
+            ClientEvent::SceneActivate(p) => p.validate(),
             ClientEvent::SyncVersionAnnounce(p) => p.validate(),
             ClientEvent::SyncSnapshotRequest(p) => p.validate(),
             ClientEvent::SyncSnapshot(p) => p.validate(),

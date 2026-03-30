@@ -18,7 +18,6 @@ pub fn RegisterForm(
     let (username, set_username) = signal(String::new());
     let (error_message, set_error_message) = signal(Option::<String>::None);
     let (qr_code_data, set_qr_code_data) = signal(Option::<String>::None);
-    let (_, set_success_message) = signal(Option::<String>::None);
     let (is_loading, set_is_loading) = signal(false);
 
     let on_submit = move |ev: SubmitEvent| {
@@ -39,7 +38,14 @@ pub fn RegisterForm(
                 username: username_val.clone(),
             };
 
-            let result = Request::post(&url).json(&payload).unwrap().send().await;
+            let result = match Request::post(&url).json(&payload) {
+                Ok(req) => req.send().await,
+                Err(e) => {
+                    set_error_message.set(Some(format!("Failed to serialize request: {}", e)));
+                    set_is_loading.set(false);
+                    return;
+                }
+            };
 
             match result {
                 Ok(response) => {
@@ -47,7 +53,6 @@ pub fn RegisterForm(
                         match response.json::<RegisterResponse>().await {
                             Ok(data) => {
                                 set_qr_code_data.set(Some(data.qr_code_base64));
-                                set_success_message.set(Some(data.message));
                                 set_error_message.set(None);
                             }
                             Err(e) => {

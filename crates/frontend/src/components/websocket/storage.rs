@@ -1,37 +1,272 @@
+use js_sys::{Object, Reflect};
+use leptos::task::spawn_local;
+use log::warn;
+use rexie::{ObjectStore, Rexie, TransactionMode};
 use serde::{Deserialize, Serialize};
-use shared::events::RoomState;
+use shared::events::{FileRef, RoomState};
+use web_sys::wasm_bindgen::{JsCast, JsValue};
+use web_sys::{Blob, Url};
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct LocalStorageData {
+const DATABASE_NAME: &str = "dnd_vtt";
+const DATABASE_VERSION: u32 = 1;
+const ROOM_STATES_STORE: &str = "room_states";
+const FILES_STORE: &str = "files";
+
+type StorageResult<T> = Result<T, String>;
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct StoredRoomState {
+    pub room_name: String,
     pub state: RoomState,
 }
 
-fn get_storage_key(room_name: &str) -> String {
-    format!("dnd_room_state:{}", room_name)
+#[derive(Clone, Debug)]
+pub struct StoredFile {
+    pub file: FileRef,
+    pub blob: Blob,
 }
 
-pub fn load_state(room_name: &str) -> Option<LocalStorageData> {
-    let key = get_storage_key(room_name);
-    if let Some(window) = web_sys::window() {
-        if let Ok(Some(storage)) = window.local_storage() {
-            if let Ok(Some(json)) = storage.get_item(&key) {
-                return serde_json::from_str(&json).ok();
-            }
-        }
+async fn open_database() -> StorageResult<Rexie> {
+    Rexie::builder(DATABASE_NAME)
+        .version(DATABASE_VERSION)
+        .add_object_store(ObjectStore::new(ROOM_STATES_STORE).key_path("room_name"))
+        .add_object_store(ObjectStore::new(FILES_STORE).key_path("hash"))
+        .build()
+        .await
+        .map_err(|error| format!("failed to open IndexedDB: {error:?}"))
+}
+
+async fn load_state_from_indexed_db(room_name: &str) -> StorageResult<Option<StoredRoomState>> {
+    let database = open_database().await?;
+    let transaction = database
+        .transaction(&[ROOM_STATES_STORE], TransactionMode::ReadOnly)
+        .map_err(|error| format!("failed to open read transaction: {error:?}"))?;
+    let store = transaction
+        .store(ROOM_STATES_STORE)
+        .map_err(|error| format!("failed to open room_states store: {error:?}"))?;
+
+    let value = store
+        .get(JsValue::from_str(room_name))
+        .await
+        .map_err(|error| format!("failed to read room state from IndexedDB: {error:?}"))?;
+
+    transaction
+        .done()
+        .await
+        .map_err(|error| format!("read transaction failed: {error:?}"))?;
+
+    match value {
+        Some(value) => serde_wasm_bindgen::from_value::<StoredRoomState>(value)
+            .map(Some)
+            .map_err(|error| format!("failed to decode room state from IndexedDB: {error}")),
+        None => Ok(None),
     }
-    None
 }
 
-pub fn save_state(room_name: &str, state: &RoomState) {
-    let key = get_storage_key(room_name);
-    let data = LocalStorageData {
+pub async fn load_state(room_name: &str) -> StorageResult<Option<StoredRoomState>> {
+    load_state_from_indexed_db(room_name).await
+}
+
+pub async fn save_state(room_name: &str, state: &RoomState) -> StorageResult<()> {
+    let database = open_database().await?;
+    let transaction = database
+        .transaction(&[ROOM_STATES_STORE], TransactionMode::ReadWrite)
+        .map_err(|error| format!("failed to open write transaction: {error:?}"))?;
+    let store = transaction
+        .store(ROOM_STATES_STORE)
+        .map_err(|error| format!("failed to open room_states store: {error:?}"))?;
+
+    let record = StoredRoomState {
+        room_name: room_name.to_string(),
         state: state.clone(),
     };
-    if let Ok(json) = serde_json::to_string(&data) {
-        if let Some(window) = web_sys::window() {
-            if let Ok(Some(storage)) = window.local_storage() {
-                let _ = storage.set_item(&key, &json);
-            }
+    let value = serde_wasm_bindgen::to_value(&record)
+        .map_err(|error| format!("failed to encode room state for IndexedDB: {error}"))?;
+
+    store
+        .put(&value, None)
+        .await
+        .map_err(|error| format!("failed to save room state to IndexedDB: {error:?}"))?;
+
+    transaction
+        .done()
+        .await
+        .map_err(|error| format!("write transaction failed: {error:?}"))?;
+
+    Ok(())
+}
+
+pub async fn delete_state(room_name: &str) -> StorageResult<()> {
+    let database = open_database().await?;
+    let transaction = database
+        .transaction(&[ROOM_STATES_STORE], TransactionMode::ReadWrite)
+        .map_err(|error| format!("failed to open delete transaction: {error:?}"))?;
+    let store = transaction
+        .store(ROOM_STATES_STORE)
+        .map_err(|error| format!("failed to open room_states store: {error:?}"))?;
+
+    store
+        .delete(JsValue::from_str(room_name))
+        .await
+        .map_err(|error| format!("failed to delete room state from IndexedDB: {error:?}"))?;
+
+    transaction
+        .done()
+        .await
+        .map_err(|error| format!("delete transaction failed: {error:?}"))?;
+
+    Ok(())
+}
+
+pub async fn move_state(from_room: &str, to_room: &str) -> StorageResult<()> {
+    if from_room == to_room {
+        return Ok(());
+    }
+
+    let Some(record) = load_state(from_room).await? else {
+        return Ok(());
+    };
+
+    save_state(to_room, &record.state).await?;
+    delete_state(from_room).await
+}
+
+pub fn save_state_in_background(room_name: &str, state: &RoomState) {
+    let room_name = room_name.to_string();
+    let state = state.clone();
+
+    spawn_local(async move {
+        if let Err(error) = save_state(&room_name, &state).await {
+            warn!(
+                "Failed to persist room state for '{}' to IndexedDB: {}",
+                room_name, error
+            );
         }
+    });
+}
+
+fn build_file_record_value(record: &StoredFile) -> StorageResult<JsValue> {
+    let object = Object::new();
+
+    Reflect::set(
+        &object,
+        &JsValue::from_str("hash"),
+        &JsValue::from_str(&record.file.hash),
+    )
+    .map_err(|error| format!("failed to encode file hash: {error:?}"))?;
+    Reflect::set(
+        &object,
+        &JsValue::from_str("mime_type"),
+        &JsValue::from_str(&record.file.mime_type),
+    )
+    .map_err(|error| format!("failed to encode file mime_type: {error:?}"))?;
+    Reflect::set(
+        &object,
+        &JsValue::from_str("file_name"),
+        &JsValue::from_str(&record.file.file_name),
+    )
+    .map_err(|error| format!("failed to encode file file_name: {error:?}"))?;
+    Reflect::set(
+        &object,
+        &JsValue::from_str("size"),
+        &JsValue::from_f64(record.file.size as f64),
+    )
+    .map_err(|error| format!("failed to encode file size: {error:?}"))?;
+    Reflect::set(&object, &JsValue::from_str("blob"), record.blob.as_ref())
+        .map_err(|error| format!("failed to encode file blob: {error:?}"))?;
+
+    Ok(object.into())
+}
+
+fn decode_string_field(value: &JsValue, field: &str) -> StorageResult<String> {
+    Reflect::get(value, &JsValue::from_str(field))
+        .map_err(|error| format!("failed to read file field '{field}': {error:?}"))?
+        .as_string()
+        .ok_or_else(|| format!("file field '{field}' is missing or not a string"))
+}
+
+fn decode_u64_field(value: &JsValue, field: &str) -> StorageResult<u64> {
+    Reflect::get(value, &JsValue::from_str(field))
+        .map_err(|error| format!("failed to read file field '{field}': {error:?}"))?
+        .as_f64()
+        .ok_or_else(|| format!("file field '{field}' is missing or not numeric"))
+        .map(|number| number as u64)
+}
+
+fn decode_blob_field(value: &JsValue, field: &str) -> StorageResult<Blob> {
+    Reflect::get(value, &JsValue::from_str(field))
+        .map_err(|error| format!("failed to read file field '{field}': {error:?}"))?
+        .dyn_into::<Blob>()
+        .map_err(|_| format!("file field '{field}' is missing or not a Blob"))
+}
+
+fn decode_file_record(value: JsValue) -> StorageResult<StoredFile> {
+    Ok(StoredFile {
+        file: FileRef {
+            hash: decode_string_field(&value, "hash")?,
+            mime_type: decode_string_field(&value, "mime_type")?,
+            file_name: decode_string_field(&value, "file_name")?,
+            size: decode_u64_field(&value, "size")?,
+        },
+        blob: decode_blob_field(&value, "blob")?,
+    })
+}
+
+pub async fn load_file(hash: &str) -> StorageResult<Option<StoredFile>> {
+    let database = open_database().await?;
+    let transaction = database
+        .transaction(&[FILES_STORE], TransactionMode::ReadOnly)
+        .map_err(|error| format!("failed to open file read transaction: {error:?}"))?;
+    let store = transaction
+        .store(FILES_STORE)
+        .map_err(|error| format!("failed to open files store: {error:?}"))?;
+
+    let value = store
+        .get(JsValue::from_str(hash))
+        .await
+        .map_err(|error| format!("failed to read file from IndexedDB: {error:?}"))?;
+
+    transaction
+        .done()
+        .await
+        .map_err(|error| format!("file read transaction failed: {error:?}"))?;
+
+    match value {
+        Some(value) => decode_file_record(value).map(Some),
+        None => Ok(None),
+    }
+}
+
+pub async fn file_exists(hash: &str) -> StorageResult<bool> {
+    load_file(hash).await.map(|record| record.is_some())
+}
+
+pub async fn save_file(record: &StoredFile) -> StorageResult<()> {
+    let database = open_database().await?;
+    let transaction = database
+        .transaction(&[FILES_STORE], TransactionMode::ReadWrite)
+        .map_err(|error| format!("failed to open file write transaction: {error:?}"))?;
+    let store = transaction
+        .store(FILES_STORE)
+        .map_err(|error| format!("failed to open files store: {error:?}"))?;
+
+    let value = build_file_record_value(record)?;
+
+    store
+        .put(&value, None)
+        .await
+        .map_err(|error| format!("failed to save file to IndexedDB: {error:?}"))?;
+
+    transaction
+        .done()
+        .await
+        .map_err(|error| format!("file write transaction failed: {error:?}"))?;
+
+    Ok(())
+}
+
+pub fn revoke_file_urls(urls: impl IntoIterator<Item = String>) {
+    for url in urls {
+        let _ = Url::revoke_object_url(&url);
     }
 }

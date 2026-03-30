@@ -4,8 +4,8 @@ use leptos::prelude::*;
 #[component]
 pub fn Cursor(
     username: String,
-    #[prop(into)] x: Signal<i32>,
-    #[prop(into)] y: Signal<i32>,
+    #[prop(into)] x: Signal<f64>,
+    #[prop(into)] y: Signal<f64>,
     #[prop(into)] visible: Signal<bool>,
     is_me: bool,
     theme: crate::config::Theme,

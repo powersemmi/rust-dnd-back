@@ -4,8 +4,8 @@ use gloo_net::websocket::Message;
 use leptos::logging::log;
 use leptos::prelude::*;
 use shared::events::{
-    ChatMessagePayload, ClientEvent, RoomState, SyncSnapshotPayload, SyncSnapshotRequestPayload,
-    SyncVersionPayload, VotingResultPayload,
+    ChatMessagePayload, ClientEvent, RoomState, Scene, SyncSnapshotPayload,
+    SyncSnapshotRequestPayload, SyncVersionPayload, VotingResultPayload,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -244,6 +244,8 @@ pub fn handle_snapshot(
     room_name: &str,
     messages_signal: RwSignal<Vec<ChatMessagePayload>>,
     state_events: RwSignal<Vec<StateEvent>>,
+    scenes_signal: RwSignal<Vec<Scene>>,
+    active_scene_id_signal: RwSignal<Option<String>>,
     conflict_signal: RwSignal<Option<SyncConflict>>,
     voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
     expected_snapshot_from: &Rc<RefCell<Option<String>>>,
@@ -302,7 +304,9 @@ pub fn handle_snapshot(
 
         messages_signal.set(payload.state.chat_history.clone());
         voting_results.set(payload.state.voting_results.clone());
-        storage::save_state(room_name, &payload.state);
+        scenes_signal.set(payload.state.scenes.clone());
+        active_scene_id_signal.set(payload.state.active_scene_id.clone());
+        storage::save_state_in_background(room_name, &payload.state);
 
         // Очищаем ожидание и закрываем окно конфликта
         *expected_snapshot_from.borrow_mut() = None;
@@ -332,7 +336,9 @@ pub fn handle_snapshot(
 
         messages_signal.set(payload.state.chat_history.clone());
         voting_results.set(payload.state.voting_results.clone());
-        storage::save_state(room_name, &payload.state);
+        scenes_signal.set(payload.state.scenes.clone());
+        active_scene_id_signal.set(payload.state.active_scene_id.clone());
+        storage::save_state_in_background(room_name, &payload.state);
 
         conflict_signal.set(None);
 
@@ -389,7 +395,9 @@ pub fn handle_snapshot(
 
             messages_signal.set(payload.state.chat_history.clone());
             voting_results.set(payload.state.voting_results.clone());
-            storage::save_state(room_name, &payload.state);
+            scenes_signal.set(payload.state.scenes.clone());
+            active_scene_id_signal.set(payload.state.active_scene_id.clone());
+            storage::save_state_in_background(room_name, &payload.state);
 
             // Очищаем конфликт при успешной синхронизации
             conflict_signal.set(None);

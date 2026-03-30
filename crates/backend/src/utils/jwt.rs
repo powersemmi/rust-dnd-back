@@ -1,10 +1,6 @@
-use crate::config::get_jwt_secret;
-use axum::{
-    Json, RequestPartsExt,
-    extract::FromRequestParts,
-    http::{StatusCode, request::Parts},
-    response::{IntoResponse, Response},
-};
+use crate::config::get_secret;
+use crate::error::AppError;
+use axum::{RequestPartsExt, extract::FromRequestParts, http::request::Parts};
 use axum_extra::{
     TypedHeader,
     headers::{Authorization, authorization::Bearer},
@@ -12,48 +8,45 @@ use axum_extra::{
 use chrono::{Duration, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: Uuid, // Subject (ID пользователя)
+    pub sub: Uuid,
     pub username: String,
-    pub exp: usize, // Expiration time (когда токен протухнет)
-    pub iat: usize, // Issued at (когда создан)
+    pub exp: u64,
+    pub iat: u64,
 }
 
-/// Создание нового JWT токена
 pub fn create_jwt(user_id: Uuid, username: String) -> Result<String, String> {
     let now = Utc::now();
-    // Токен живет 24 часа
     let expire = now + Duration::hours(24);
 
     let claims = Claims {
         sub: user_id,
         username,
-        exp: expire.timestamp() as usize,
-        iat: now.timestamp() as usize,
+        exp: timestamp_to_u64(expire.timestamp()),
+        iat: timestamp_to_u64(now.timestamp()),
     };
 
-    let secret = get_jwt_secret();
+    let secret = get_secret("JWT_SECRET");
 
     encode(
         &Header::default(),
         &claims,
         &EncodingKey::from_secret(secret.as_bytes()),
     )
-    .map_err(|e| e.to_string())
+    .map_err(|error| error.to_string())
 }
 
 pub fn verify_jwt(token: &str) -> Result<Claims, String> {
-    let secret = get_jwt_secret();
+    let secret = get_secret("JWT_SECRET");
     let token_data = decode::<Claims>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),
         &Validation::default(),
     )
-    .map_err(|e| format!("Invalid token: {}", e))?;
+    .map_err(|error| format!("Invalid token: {error}"))?;
 
     Ok(token_data.claims)
 }
@@ -67,33 +60,52 @@ impl<S> FromRequestParts<S> for AuthUser
 where
     S: Send + Sync,
 {
-    type Rejection = Response;
+    type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        // 1. Ищем заголовок Authorization: Bearer <token>
         let TypedHeader(Authorization(bearer)) = parts
             .extract::<TypedHeader<Authorization<Bearer>>>()
             .await
-            .map_err(|_| {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(json!({"error": "Missing bearer token"})),
-                )
-                    .into_response()
-            })?;
+            .map_err(|_| AppError::unauthorized("Missing bearer token"))?;
 
-        // 2. Используем нашу новую функцию verify_jwt
-        let claims = verify_jwt(bearer.token()).map_err(|_| {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Invalid token"})),
-            )
-                .into_response()
-        })?;
+        let claims =
+            verify_jwt(bearer.token()).map_err(|_| AppError::unauthorized("Invalid token"))?;
 
         Ok(AuthUser {
             user_id: claims.sub,
             username: claims.username,
         })
+    }
+}
+
+fn timestamp_to_u64(timestamp: i64) -> u64 {
+    u64::try_from(timestamp).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{create_jwt, verify_jwt};
+    use std::sync::Once;
+    use uuid::Uuid;
+
+    fn init_test_env() {
+        static INIT: Once = Once::new();
+        INIT.call_once(|| unsafe {
+            std::env::set_var("JWT_SECRET", "test-jwt-secret-1234567890");
+        });
+    }
+
+    #[test]
+    fn create_and_verify_token_round_trip() {
+        init_test_env();
+
+        let user_id = Uuid::new_v4();
+        let username = "alice".to_string();
+        let token = create_jwt(user_id, username.clone()).expect("token creation must succeed");
+        let claims = verify_jwt(&token).expect("token verification must succeed");
+
+        assert_eq!(claims.sub, user_id);
+        assert_eq!(claims.username, username);
+        assert!(claims.exp >= claims.iat);
     }
 }

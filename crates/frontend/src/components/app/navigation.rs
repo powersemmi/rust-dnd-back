@@ -1,12 +1,13 @@
 use crate::components::statistics::StateEvent;
 use crate::components::voting::VotingState;
 use crate::components::websocket::{
-    ConflictResolutionHandle, CursorSignals, SyncConflict, WsSender, connect_websocket,
+    ConflictResolutionHandle, CursorSignals, FileTransferState, SyncConflict, WsSender,
+    connect_websocket,
 };
 use crate::config;
 use crate::utils::{auth, token_refresh};
 use leptos::prelude::*;
-use shared::events::{ChatMessagePayload, voting::VotingResultPayload};
+use shared::events::{ChatMessagePayload, Scene, voting::VotingResultPayload};
 use std::collections::HashMap;
 
 use super::AppState;
@@ -59,10 +60,13 @@ pub fn create_room_selected_callback(
     set_app_state: WriteSignal<AppState>,
     jwt_token: ReadSignal<String>,
     username: ReadSignal<String>,
+    file_transfer: FileTransferState,
     set_ws_sender: WriteSignal<Option<WsSender>>,
     set_cursors: WriteSignal<HashMap<String, CursorSignals>>,
     messages: RwSignal<Vec<ChatMessagePayload>>,
     state_events: RwSignal<Vec<StateEvent>>,
+    scenes: RwSignal<Vec<Scene>>,
+    active_scene_id: RwSignal<Option<String>>,
     conflict_signal: RwSignal<Option<SyncConflict>>,
     votings: RwSignal<HashMap<String, VotingState>>,
     voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
@@ -75,6 +79,7 @@ pub fn create_room_selected_callback(
 ) -> impl Fn(String) + Clone {
     let handle_clone = conflict_resolution_handle.clone();
     move |selected_room_id: String| {
+        file_transfer.reset();
         set_room_id.set(selected_room_id.clone());
         set_app_state.set(AppState::Connected);
 
@@ -83,10 +88,13 @@ pub fn create_room_selected_callback(
             selected_room_id,
             jwt_token.get(),
             username.get_untracked(),
+            file_transfer.clone(),
             set_ws_sender,
             set_cursors,
             messages,
             state_events,
+            scenes,
+            active_scene_id,
             conflict_signal,
             votings,
             voting_results,

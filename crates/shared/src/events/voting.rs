@@ -8,7 +8,9 @@ use validator::Validate;
 #[cfg_attr(feature = "schemas", derive(ToSchema))]
 #[cfg_attr(feature = "validation", derive(Validate))]
 pub struct VotingOption {
+    #[cfg_attr(feature = "validation", validate(length(min = 1, max = 255)))]
     pub id: String,
+    #[cfg_attr(feature = "validation", validate(length(min = 1, max = 500)))]
     pub text: String,
 }
 
@@ -23,13 +25,17 @@ pub enum VotingType {
 #[cfg_attr(feature = "schemas", derive(ToSchema))]
 #[cfg_attr(feature = "validation", derive(Validate))]
 pub struct VotingStartPayload {
+    #[cfg_attr(feature = "validation", validate(length(min = 1, max = 255)))]
     pub voting_id: String,
+    #[cfg_attr(feature = "validation", validate(length(min = 1, max = 500)))]
     pub question: String,
+    #[cfg_attr(feature = "validation", validate(length(min = 1), nested))]
     pub options: Vec<VotingOption>,
     pub voting_type: VotingType,
     pub is_anonymous: bool,
     pub timer_seconds: Option<u32>,
     pub default_option_id: Option<String>, // Для single choice с таймером
+    #[cfg_attr(feature = "validation", validate(length(min = 1, max = 255)))]
     pub creator: String,
 }
 

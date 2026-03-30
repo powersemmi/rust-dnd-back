@@ -18,11 +18,9 @@ pub enum MouseEventTypeEnum {
 #[cfg_attr(feature = "validation", derive(Validate))]
 #[cfg_attr(feature = "schemas", derive(ToSchema))]
 pub struct MouseClickPayload {
-    #[cfg_attr(feature = "validation", validate(range(min = 0, max = 10000)))]
-    pub x: i32,
+    pub x: f64,
 
-    #[cfg_attr(feature = "validation", validate(range(min = 0, max = 10000)))]
-    pub y: i32,
+    pub y: f64,
 
     pub mouse_event_type: MouseEventTypeEnum,
 

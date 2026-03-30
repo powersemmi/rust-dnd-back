@@ -7,49 +7,25 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use wasm_bindgen_futures::spawn_local;
 
 use super::super::websocket::WsSender;
-use super::AppState;
 
-/// Обрабатывает движение мыши и отправляет координаты через WebSocket
-pub fn create_mouse_move_handler(
-    app_state: ReadSignal<AppState>,
-    username: ReadSignal<String>,
-    set_cursors: WriteSignal<HashMap<String, CursorSignals>>,
-    ws_sender: ReadSignal<Option<WsSender>>,
-    cfg: StoredValue<config::Config>,
-) -> impl Fn(leptos::web_sys::MouseEvent) + Clone {
-    move |ev: leptos::web_sys::MouseEvent| {
-        if app_state.get() != AppState::Connected {
-            return;
-        }
-
-        let x = ev.client_x();
-        let y = ev.client_y();
-        let user = username.get();
-
-        // Обновляем локальный курсор
-        update_local_cursor(&user, x, y, set_cursors);
-
-        // Отправляем событие через WebSocket с троттлингом
-        send_mouse_event_throttled(x, y, user, ws_sender, cfg);
-    }
-}
-
-/// Обновляет позицию локального курсора в мапе
-fn update_local_cursor(
+pub fn update_local_cursor_world(
     user: &str,
-    x: i32,
-    y: i32,
+    x: f64,
+    y: f64,
     set_cursors: WriteSignal<HashMap<String, CursorSignals>>,
 ) {
+    let now = js_sys::Date::now();
+
     set_cursors.update(|map| {
         if let Some(cursor_signals) = map.get(user) {
             cursor_signals.set_x.set(x);
             cursor_signals.set_y.set(y);
+            cursor_signals.set_last_activity.set(now);
         } else {
             let (rx_x, tx_x) = signal(x);
             let (rx_y, tx_y) = signal(y);
-            let (last_activity, set_last_activity) = signal(0.0);
-            let (visible, set_visible) = signal(false); // Свой курсор по умолчанию скрыт
+            let (last_activity, set_last_activity) = signal(now);
+            let (visible, set_visible) = signal(false);
             map.insert(
                 user.to_string(),
                 CursorSignals {
@@ -67,10 +43,9 @@ fn update_local_cursor(
     });
 }
 
-/// Отправляет событие движения мыши через WebSocket с троттлингом
-fn send_mouse_event_throttled(
-    x: i32,
-    y: i32,
+pub fn send_mouse_event_throttled(
+    x: f64,
+    y: f64,
     user: String,
     ws_sender: ReadSignal<Option<WsSender>>,
     cfg: StoredValue<config::Config>,
@@ -96,15 +71,10 @@ fn send_mouse_event_throttled(
     });
 
     if should_send {
-        if let Some(mut sender) = ws_sender.get() {
-            if let Ok(json) = serde_json::to_string(&event) {
-                let send_result = sender.try_send(gloo_net::websocket::Message::Text(json));
-                if send_result.is_err() {
-                    leptos::logging::log!("⚠️ [MOUSE] Failed to send cursor position for {}", user);
-                }
-            }
-        } else {
-            leptos::logging::log!("⚠️ [MOUSE] No WS sender available");
+        if let Some(mut sender) = ws_sender.get()
+            && let Ok(json) = serde_json::to_string(&event)
+        {
+            let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
         }
 
         let throttle_ms = cfg.get_value().theme.mouse_throttle_ms;

@@ -46,7 +46,14 @@ pub fn LoginForm(
                 code: code_val,
             };
 
-            let result = Request::post(&url).json(&payload).unwrap().send().await;
+            let result = match Request::post(&url).json(&payload) {
+                Ok(req) => req.send().await,
+                Err(e) => {
+                    set_error_message.set(Some(format!("Failed to serialize request: {}", e)));
+                    set_is_loading.set(false);
+                    return;
+                }
+            };
 
             match result {
                 Ok(response) => {

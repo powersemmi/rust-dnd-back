@@ -10,7 +10,7 @@ use validator::Validate;
 pub struct Params {
     #[cfg_attr(feature = "validation", validate(length(min = 1, max = 255)))]
     pub room_id: String,
-    #[cfg_attr(feature = "validation", validate(length(min = 32, max = 32)))]
-    #[cfg_attr(feature = "schemas", schema(value_type = String, format = "uuid"))]
+    #[cfg_attr(feature = "validation", validate(length(min = 50, max = 2000)))]
+    #[cfg_attr(feature = "schemas", schema(value_type = String))]
     pub token: String,
 }

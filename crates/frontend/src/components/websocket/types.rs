@@ -53,10 +53,10 @@ pub struct SyncConflict {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CursorSignals {
-    pub x: ReadSignal<i32>,
-    pub set_x: WriteSignal<i32>,
-    pub y: ReadSignal<i32>,
-    pub set_y: WriteSignal<i32>,
+    pub x: ReadSignal<f64>,
+    pub set_x: WriteSignal<f64>,
+    pub y: ReadSignal<f64>,
+    pub set_y: WriteSignal<f64>,
     pub last_activity: ReadSignal<f64>,
     pub set_last_activity: WriteSignal<f64>,
     pub visible: ReadSignal<bool>,

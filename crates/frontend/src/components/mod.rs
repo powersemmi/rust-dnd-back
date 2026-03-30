@@ -7,6 +7,8 @@ pub mod language_selector;
 pub mod login;
 pub mod register;
 pub mod room_selector;
+pub mod scene_board;
+pub mod scenes;
 pub mod settings;
 pub mod side_menu;
 pub mod statistics;

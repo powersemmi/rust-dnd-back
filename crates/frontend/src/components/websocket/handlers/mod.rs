@@ -1,15 +1,17 @@
 mod chat;
+mod file;
 mod mouse;
 mod presence;
+mod scene;
 mod sync;
 pub mod sync_discard;
 mod voting;
 
 use crate::components::statistics::StateEvent;
 use crate::components::voting::VotingState;
-use crate::components::websocket::{WsSender, types::*};
+use crate::components::websocket::{FileTransferState, WsSender, types::*};
 use leptos::prelude::*;
-use shared::events::{ChatMessagePayload, ClientEvent, RoomState, VotingResultPayload};
+use shared::events::{ChatMessagePayload, ClientEvent, RoomState, Scene, VotingResultPayload};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -18,6 +20,7 @@ use std::rc::Rc;
 pub fn handle_event(
     event: ClientEvent,
     tx: &WsSender,
+    file_transfer: &FileTransferState,
     room_state: &Rc<RefCell<RoomState>>,
     local_version: &Rc<RefCell<u64>>,
     last_synced_version: &Rc<RefCell<u64>>,
@@ -27,6 +30,8 @@ pub fn handle_event(
     set_cursors: WriteSignal<HashMap<String, CursorSignals>>,
     messages_signal: RwSignal<Vec<ChatMessagePayload>>,
     state_events: RwSignal<Vec<StateEvent>>,
+    scenes_signal: RwSignal<Vec<Scene>>,
+    active_scene_id_signal: RwSignal<Option<String>>,
     conflict_signal: RwSignal<Option<SyncConflict>>,
     votings: RwSignal<HashMap<String, VotingState>>,
     voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
@@ -53,11 +58,73 @@ pub fn handle_event(
             has_chat_notification,
             chat_notification_count,
         ),
+        ClientEvent::FileAnnounce(payload) => {
+            file::handle_file_announce(payload, file_transfer, my_username, tx)
+        }
+        ClientEvent::FileRequest(payload) => {
+            file::handle_file_request(payload, file_transfer, room_name, my_username, tx)
+        }
+        ClientEvent::FileChunk(payload) => {
+            file::handle_file_chunk(payload, file_transfer, room_name, my_username, tx)
+        }
+        ClientEvent::FileAbort(payload) => {
+            file::handle_file_abort(payload, file_transfer, my_username)
+        }
+        ClientEvent::SceneCreate(payload) => scene::handle_scene_create(
+            payload,
+            room_state,
+            local_version,
+            last_synced_version,
+            my_username,
+            room_name,
+            scenes_signal,
+            active_scene_id_signal,
+            state_events,
+        ),
+        ClientEvent::SceneUpdate(payload) => scene::handle_scene_update(
+            payload,
+            room_state,
+            local_version,
+            last_synced_version,
+            my_username,
+            room_name,
+            scenes_signal,
+            active_scene_id_signal,
+            state_events,
+        ),
+        ClientEvent::SceneDelete(payload) => scene::handle_scene_delete(
+            payload,
+            room_state,
+            local_version,
+            last_synced_version,
+            my_username,
+            room_name,
+            scenes_signal,
+            active_scene_id_signal,
+            state_events,
+        ),
+        ClientEvent::SceneActivate(payload) => scene::handle_scene_activate(
+            payload,
+            room_state,
+            local_version,
+            last_synced_version,
+            my_username,
+            room_name,
+            scenes_signal,
+            active_scene_id_signal,
+            state_events,
+        ),
         ClientEvent::MouseClickPayload(mouse_event) => {
             mouse::handle_mouse_event(mouse_event, my_username, set_cursors)
         }
         ClientEvent::SyncRequest => {
-            sync::handle_sync_request(tx, room_state, local_version, my_username)
+            sync::handle_sync_request(tx, room_state, local_version, my_username);
+            file_transfer.reannounce_scene_files(
+                room_name.to_string(),
+                my_username.to_string(),
+                Some(tx.clone()),
+                &room_state.borrow(),
+            );
         }
         ClientEvent::SyncVersionAnnounce(payload) => sync::handle_sync_announce(
             payload,
@@ -85,6 +152,8 @@ pub fn handle_event(
             room_name,
             messages_signal,
             state_events,
+            scenes_signal,
+            active_scene_id_signal,
             conflict_signal,
             voting_results,
             expected_snapshot_from,
@@ -121,6 +190,8 @@ pub fn handle_event(
             collected_snapshots,
             is_collecting_snapshots,
             messages_signal,
+            scenes_signal,
+            active_scene_id_signal,
             conflict_signal,
         ),
         ClientEvent::VotingEnd(payload) => {

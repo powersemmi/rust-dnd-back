@@ -12,7 +12,7 @@ pub fn handle_mouse_event(
     }
 
     leptos::logging::log!(
-        "🖱️ [MOUSE] Received cursor from {}: ({}, {})",
+        "🖱️ [MOUSE] Received world cursor from {}: ({:.2}, {:.2})",
         mouse_event.user_id,
         mouse_event.x,
         mouse_event.y

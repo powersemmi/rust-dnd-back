@@ -6,6 +6,7 @@ use leptos::prelude::*;
 pub fn SideMenu(
     #[prop(into)] is_open: RwSignal<bool>,
     on_chat_open: Callback<()>,
+    on_scenes_open: Callback<()>,
     on_settings_open: Callback<()>,
     on_statistics_open: Callback<()>,
     on_voting_open: Callback<()>,
@@ -105,6 +106,36 @@ pub fn SideMenu(
                                     } else {
                                         t_string!(i18n, menu.hotkey_chat).to_string()
                                     }}
+                                </span>
+                            }.into_any()
+                        } else {
+                            view! {}.into_any()
+                        }}
+                    </button>
+
+                    <button
+                        on:click=move |_| {
+                            on_scenes_open.run(());
+                        }
+                        style=format!(
+                            "padding: 0.75rem; background: {}; color: {}; border: none; border-radius: 0.3125rem; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: background 0.2s; min-width: 0;",
+                            button_bg, theme.ui_text_primary
+                        )
+                        onmouseover=format!("this.style.background='{}'", button_hover)
+                        onmouseout=format!("this.style.background='{}'", button_bg)
+                    >
+                        <span style=move || if is_open.get() {
+                            "white-space: nowrap;".to_string()
+                        } else {
+                            "white-space: nowrap; overflow: hidden; text-overflow: ellipsis;".to_string()
+                        }>
+                            {"🗺️ "}
+                            {move || if is_open.get() { t_string!(i18n, menu.scenes) } else { "" }}
+                        </span>
+                        {move || if !is_open.get() {
+                            view! {
+                                <span style=format!("color: {}; font-size: 0.75rem; margin-left: 0.5rem;", theme.ui_text_secondary)>
+                                    {t_string!(i18n, menu.hotkey_scenes)}
                                 </span>
                             }.into_any()
                         } else {

@@ -1,185 +1,282 @@
+use crate::AppError;
 use crate::AppState;
 use crate::utils::jwt::verify_jwt;
+use crate::ws_policy::{
+    ConnectionRateLimiter, IncomingMessageKind, MAX_INBOUND_MESSAGE_SIZE_BYTES,
+    close_frame_for_violation,
+};
 use axum::extract::ws::{Message, Utf8Bytes, WebSocket};
 use axum::extract::{Query, State, WebSocketUpgrade};
-use axum::response::IntoResponse;
-use futures::{SinkExt, StreamExt};
+use axum::response::{IntoResponse, Response};
+use futures::{
+    SinkExt, StreamExt,
+    stream::{SplitSink, SplitStream},
+};
+use redis::aio::PubSub;
+use serde_json::json;
 use shared::events::{ClientEvent, Params};
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-#[repr(u8)]
-enum EventType {
-    Text = 0,
-    Redis = 1,
-    Error = 2,
-}
+const ROOM_ACTIVITY_TTL_SECONDS: u64 = 86_400;
+const WEBSOCKET_CHANNEL_CAPACITY: usize = 100;
+
+type SocketSender = SplitSink<WebSocket, Message>;
+type SocketReceiver = SplitStream<WebSocket>;
 
 fn try_parse_event(text: &str) -> Result<ClientEvent, Utf8Bytes> {
-    // 1. Попытка распарсить JSON
-    let event = match serde_json::from_str::<ClientEvent>(&text) {
-        Ok(event) => event,
-        Err(err) => {
-            return Err(format!("{{\"error\": \"Invalid JSON: {}\"}}", err).into());
-        }
-    };
-    if let Err(err) = event.validate() {
-        return Err(format!("{{\"error\": \"Validation failed: {}\"}}", err).into());
+    let event = serde_json::from_str::<ClientEvent>(text).map_err(|error| {
+        Utf8Bytes::from(json!({ "error": format!("Invalid JSON: {error}") }).to_string())
+    })?;
+
+    if let Err(error) = event.validate() {
+        return Err(Utf8Bytes::from(
+            json!({ "error": format!("Validation failed: {error}") }).to_string(),
+        ));
     }
+
     Ok(event)
 }
 
-async fn handle_events(
+async fn process_client_message(
     text: String,
-    channel_name: &String,
-    state: &Arc<AppState>,
-) -> (Option<Utf8Bytes>, EventType) {
-    let result = try_parse_event(&text);
+    channel_name: &str,
+    state: &AppState,
+) -> Option<Utf8Bytes> {
+    let event = match try_parse_event(&text) {
+        Ok(event) => event,
+        Err(error) => return Some(error),
+    };
 
-    let mut redis_connect = state
-        .get_redis()
-        .get_multiplexed_async_connection()
-        .await
-        .unwrap();
-
-    match result {
-        Ok(event) => {
-            match event {
-                ClientEvent::Ping => (Some("{\"type\": \"PONG\"}".into()), EventType::Text),
-                _ => {
-                    // Публикуем сообщение в канал
-                    let _: () = redis::cmd("PUBLISH")
-                        .arg(&channel_name)
-                        .arg(text.to_string())
-                        .query_async(&mut redis_connect)
-                        .await
-                        .unwrap();
-
-                    // Устанавливаем TTL 24 часа для activity ключа канала
-                    let activity_key = format!("{}:activity", channel_name);
-                    let _: () = redis::cmd("SETEX")
-                        .arg(&activity_key)
-                        .arg(86400) // 24 часа в секундах
-                        .arg("1")
-                        .query_async(&mut redis_connect)
-                        .await
-                        .unwrap();
-
-                    (None, EventType::Redis)
-                }
+    match event {
+        ClientEvent::Ping => Some(json!({ "type": "PONG" }).to_string().into()),
+        _ => {
+            if let Err(error) = publish_event(&state.redis, channel_name, &text).await {
+                error!(
+                    "Failed to publish message to Redis for channel {}: {}",
+                    channel_name, error
+                );
+                return Some(
+                    json!({ "error": "Failed to broadcast message" })
+                        .to_string()
+                        .into(),
+                );
             }
+
+            if let Err(error) = refresh_room_activity(&state.redis, channel_name).await {
+                error!(
+                    "Failed to refresh room activity for channel {}: {}",
+                    channel_name, error
+                );
+            }
+
+            None
         }
-        Err(e) => (Some(e), EventType::Error),
     }
 }
 
-async fn handle_socket(socket: WebSocket, room_id: String, user_id: Uuid, state: Arc<AppState>) {
-    let channel_name = format!("room:{}", room_id);
-    let (mut sender, mut receiver) = socket.split();
-    let (tx, mut rx) = mpsc::channel::<Message>(100);
+async fn publish_event(
+    redis: &redis::Client,
+    channel_name: &str,
+    payload: &str,
+) -> redis::RedisResult<()> {
+    let mut connection = redis.get_multiplexed_async_connection().await?;
+    redis::cmd("PUBLISH")
+        .arg(channel_name)
+        .arg(payload)
+        .query_async::<usize>(&mut connection)
+        .await?;
 
-    // Проверяем активность комнаты перед подключением
-    let mut redis_connect = state
-        .get_redis()
-        .get_multiplexed_async_connection()
-        .await
-        .expect("Failed to get redis connection");
+    Ok(())
+}
 
-    let activity_key = format!("{}:activity", channel_name);
-    let exists: bool = redis::cmd("EXISTS")
+async fn refresh_room_activity(
+    redis: &redis::Client,
+    channel_name: &str,
+) -> redis::RedisResult<()> {
+    let mut connection = redis.get_multiplexed_async_connection().await?;
+    let activity_key = activity_key(channel_name);
+
+    redis::cmd("SETEX")
         .arg(&activity_key)
-        .query_async(&mut redis_connect)
-        .await
-        .unwrap_or(false);
+        .arg(ROOM_ACTIVITY_TTL_SECONDS)
+        .arg("1")
+        .query_async::<()>(&mut connection)
+        .await?;
 
-    // Если комната неактивна более 24 часов, устанавливаем новый TTL
+    Ok(())
+}
+
+async fn ensure_room_activity(
+    redis: &redis::Client,
+    room_id: &str,
+    channel_name: &str,
+) -> redis::RedisResult<()> {
+    let mut connection = redis.get_multiplexed_async_connection().await?;
+    let activity_key = activity_key(channel_name);
+    let exists = redis::cmd("EXISTS")
+        .arg(&activity_key)
+        .query_async::<bool>(&mut connection)
+        .await?;
+
     if !exists {
         debug!("Room {} was inactive, resetting activity", room_id);
-        let _: () = redis::cmd("SETEX")
+        redis::cmd("SETEX")
             .arg(&activity_key)
-            .arg(86400)
+            .arg(ROOM_ACTIVITY_TTL_SECONDS)
             .arg("1")
-            .query_async(&mut redis_connect)
-            .await
-            .unwrap();
+            .query_async::<()>(&mut connection)
+            .await?;
     }
 
-    let mut pubsub = state
-        .get_redis()
-        .get_async_pubsub()
-        .await
-        .expect("Failed to get pubsub connection");
+    Ok(())
+}
 
-    info!("User={user_id} connected to channel with channel_name={channel_name}");
+fn activity_key(channel_name: &str) -> String {
+    format!("{channel_name}:activity")
+}
 
-    pubsub
-        .subscribe(&channel_name)
-        .await
-        .expect("Failed to subscribe to channel");
-
-    let mut write_task = tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            if sender.send(msg).await.is_err() {
+fn spawn_send_task(mut sender: SocketSender, mut rx: mpsc::Receiver<Message>) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        while let Some(message) = rx.recv().await {
+            if let Err(error) = sender.send(message).await {
+                debug!("Failed to send WebSocket message: {}", error);
                 break;
             }
         }
-    });
+    })
+}
 
-    let tx_send = tx.clone();
-    let mut send_task = tokio::spawn(async move {
-        while let Some(msg) = pubsub.on_message().next().await {
-            let payload: String = msg.get_payload().unwrap();
+fn spawn_redis_listener(mut pubsub: PubSub, tx: mpsc::Sender<Message>) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut messages = pubsub.on_message();
+
+        while let Some(message) = messages.next().await {
+            let payload = match message.get_payload::<String>() {
+                Ok(payload) => payload,
+                Err(error) => {
+                    error!("Failed to decode Redis payload: {}", error);
+                    continue;
+                }
+            };
+
             debug!("Received message from Redis: {}", payload);
-
-            if tx_send
-                .send(Message::Text(Utf8Bytes::from(payload)))
-                .await
-                .is_err()
-            {
-                debug!("WebSocket connection closed");
+            if tx.send(Message::Text(payload.into())).await.is_err() {
+                debug!("WebSocket connection closed while delivering Redis payload");
                 break;
             }
         }
-    });
+    })
+}
 
-    let tx_recv = tx.clone();
-    let mut recv_task = tokio::spawn(async move {
-        while let Some(Ok(msg)) = receiver.next().await {
-            match msg {
-                Message::Text(text) => {
-                    let (event_msg, event_type) =
-                        handle_events(text.to_string(), &channel_name, &state).await;
-                    match (event_msg, event_type) {
-                        (Some(resp), EventType::Text) => {
-                            tx_recv.send(Message::Text(resp)).await.unwrap();
-                            debug!("Text event received");
-                        }
-                        (Some(e), EventType::Error) => {
-                            tx_recv.send(Message::Text(e)).await.unwrap();
-                            debug!("Error event received");
-                        }
-                        (None, EventType::Redis) => {
-                            debug!("Redis event received");
-                        }
-                        _ => {
-                            error!("Unknown event type received")
-                        }
+fn classify_incoming_message(event: &ClientEvent) -> IncomingMessageKind {
+    match event {
+        ClientEvent::MouseClickPayload(_) => IncomingMessageKind::Mouse,
+        ClientEvent::FileChunk(_) => IncomingMessageKind::FileChunk,
+        _ => IncomingMessageKind::General,
+    }
+}
+
+fn spawn_receive_task(
+    mut receiver: SocketReceiver,
+    tx: mpsc::Sender<Message>,
+    channel_name: String,
+    state: Arc<AppState>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut rate_limiter = ConnectionRateLimiter::default();
+
+        while let Some(message) = receiver.next().await {
+            match message {
+                Ok(Message::Text(text)) => {
+                    let parsed_event = serde_json::from_str::<ClientEvent>(&text);
+                    let message_kind = parsed_event
+                        .as_ref()
+                        .map(classify_incoming_message)
+                        .unwrap_or(IncomingMessageKind::General);
+
+                    if let Err(violation) = rate_limiter.check(message_kind) {
+                        let close_frame = close_frame_for_violation(violation);
+                        info!(
+                            "Closing room channel {} due to websocket rate limit: {}",
+                            channel_name, close_frame.reason
+                        );
+
+                        let _ = tx.send(Message::Close(Some(close_frame))).await;
+                        break;
+                    }
+
+                    if let Some(response) =
+                        process_client_message(text.to_string(), &channel_name, state.as_ref())
+                            .await
+                        && tx.send(Message::Text(response)).await.is_err()
+                    {
+                        debug!("WebSocket connection closed while returning handler response");
+                        break;
                     }
                 }
-                Message::Close(_) => break,
-                _ => {
-                    error!("Unexpected message received: {msg:?}")
+                Ok(Message::Close(_)) => break,
+                Ok(other) => error!("Unexpected message received: {:?}", other),
+                Err(error) => {
+                    error!("Failed to read WebSocket message: {}", error);
+                    break;
                 }
             }
         }
-    });
+    })
+}
+
+async fn handle_socket(socket: WebSocket, room_id: String, user_id: Uuid, state: Arc<AppState>) {
+    let channel_name = format!("room:{room_id}");
+    let (sender, receiver) = socket.split();
+    let (tx, rx) = mpsc::channel::<Message>(WEBSOCKET_CHANNEL_CAPACITY);
+
+    if let Err(error) = ensure_room_activity(&state.redis, &room_id, &channel_name).await {
+        error!(
+            "Failed to check or update room activity for room {}: {}",
+            room_id, error
+        );
+        return;
+    }
+
+    let mut pubsub = match state.redis.get_async_pubsub().await {
+        Ok(pubsub) => pubsub,
+        Err(error) => {
+            error!("Failed to get Redis pubsub connection: {}", error);
+            return;
+        }
+    };
+
+    info!(
+        "User={} connected to channel with channel_name={}",
+        user_id, channel_name
+    );
+
+    if let Err(error) = pubsub.subscribe(&channel_name).await {
+        error!("Failed to subscribe to channel {}: {}", channel_name, error);
+        return;
+    }
+
+    let mut send_task = spawn_send_task(sender, rx);
+    let mut redis_task = spawn_redis_listener(pubsub, tx.clone());
+    let mut receive_task = spawn_receive_task(receiver, tx, channel_name, state);
 
     tokio::select! {
-        _ = (&mut send_task) => send_task.abort(),
-        _ = (&mut recv_task) => recv_task.abort(),
-        _ = (&mut write_task) => write_task.abort(),
+        _ = &mut send_task => {
+            redis_task.abort();
+            receive_task.abort();
+        }
+        _ = &mut redis_task => {
+            send_task.abort();
+            receive_task.abort();
+        }
+        _ = &mut receive_task => {
+            send_task.abort();
+            redis_task.abort();
+        }
     }
 
     info!("User disconnected from room {}", room_id);
@@ -189,17 +286,18 @@ pub async fn ws_room_handler(
     ws: WebSocketUpgrade,
     Query(params): Query<Params>,
     State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+) -> Response {
     let claims = match verify_jwt(&params.token) {
         Ok(claims) => claims,
-        Err(e) => {
-            error!("WebSocket auth failed: {}", e);
-            // Если токен невалиден, возвращаем 401 Unauthorized
-            // WebSocket соединение даже не начнется
-            return (axum::http::StatusCode::UNAUTHORIZED, "Invalid token").into_response();
+        Err(error) => {
+            error!("WebSocket auth failed: {}", error);
+            return AppError::unauthorized("Invalid token").into_response();
         }
     };
 
     info!("Handling WebSocket connection for room: {}", params.room_id);
-    ws.on_upgrade(move |socket| handle_socket(socket, params.room_id, claims.sub, state))
+    ws.max_message_size(MAX_INBOUND_MESSAGE_SIZE_BYTES)
+        .max_frame_size(MAX_INBOUND_MESSAGE_SIZE_BYTES)
+        .on_upgrade(move |socket| handle_socket(socket, params.room_id, claims.sub, state))
+        .into_response()
 }

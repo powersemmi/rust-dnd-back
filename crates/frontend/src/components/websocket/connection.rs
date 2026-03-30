@@ -1,6 +1,6 @@
 use crate::components::statistics::StateEvent;
 use crate::components::voting::VotingState;
-use crate::components::websocket::{storage, types::CursorSignals};
+use crate::components::websocket::{FileTransferState, storage, types::CursorSignals};
 use crate::config;
 use futures::{SinkExt, StreamExt};
 use gloo_net::websocket::{Message, futures::WebSocket as GlooWebSocket};
@@ -10,7 +10,8 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use rand::seq::IndexedRandom;
 use shared::events::{
-    ChatMessagePayload, ClientEvent, RoomState, SyncSnapshotRequestPayload, VotingResultPayload,
+    ChatMessagePayload, ClientEvent, RoomState, Scene, SyncSnapshotRequestPayload,
+    VotingResultPayload,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -25,10 +26,13 @@ pub fn connect_websocket(
     room_name: String,
     jwt_token: String,
     my_username: String,
+    file_transfer: FileTransferState,
     set_ws_sender: WriteSignal<Option<WsSender>>,
     set_cursors: WriteSignal<HashMap<String, CursorSignals>>,
     messages_signal: RwSignal<Vec<ChatMessagePayload>>,
     state_events: RwSignal<Vec<StateEvent>>,
+    scenes_signal: RwSignal<Vec<Scene>>,
+    active_scene_id_signal: RwSignal<Option<String>>,
     conflict_signal: RwSignal<Option<SyncConflict>>,
     votings: RwSignal<HashMap<String, VotingState>>,
     voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
@@ -53,16 +57,7 @@ pub fn connect_websocket(
         Rc::new(RefCell::new(Vec::new()));
     let is_collecting_announces: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
 
-    // Загрузка из localStorage
-    if let Some(data) = storage::load_state(&room_name) {
-        log!("Loaded state from LS: v{}", data.state.version);
-        *local_version.borrow_mut() = data.state.version;
-        *last_synced_version.borrow_mut() = data.state.version;
-        *room_state.borrow_mut() = data.state.clone();
-        messages_signal.set(data.state.chat_history.clone());
-        voting_results.set(data.state.voting_results);
-    }
-
+    let room_name_for_storage = room_name.clone();
     let room_name_clone = room_name.clone();
     let my_username_clone = my_username.clone();
 
@@ -71,6 +66,21 @@ pub fn connect_websocket(
 
     // Подключение
     spawn_local(async move {
+        match storage::load_state(&room_name_for_storage).await {
+            Ok(Some(data)) => {
+                log!("Loaded state from IndexedDB: v{}", data.state.version);
+                *local_version.borrow_mut() = data.state.version;
+                *last_synced_version.borrow_mut() = data.state.version;
+                *room_state.borrow_mut() = data.state.clone();
+                messages_signal.set(data.state.chat_history.clone());
+                voting_results.set(data.state.voting_results.clone());
+                scenes_signal.set(data.state.scenes.clone());
+                active_scene_id_signal.set(data.state.active_scene_id.clone());
+            }
+            Ok(None) => {}
+            Err(error) => log!("Failed to load state from IndexedDB: {}", error),
+        }
+
         match GlooWebSocket::open(&ws_url) {
             Ok(ws) => {
                 let (mut write, read) = ws.split();
@@ -131,6 +141,7 @@ pub fn connect_websocket(
                 process_messages(
                     read,
                     tx,
+                    file_transfer,
                     room_state,
                     local_version,
                     last_synced_version,
@@ -140,6 +151,8 @@ pub fn connect_websocket(
                     set_cursors,
                     messages_signal,
                     state_events,
+                    scenes_signal,
+                    active_scene_id_signal,
                     conflict_signal,
                     votings,
                     voting_results,
@@ -270,6 +283,7 @@ fn start_cursor_cleanup_timer(set_cursors: WriteSignal<HashMap<String, CursorSig
 async fn process_messages(
     mut read: futures::stream::SplitStream<GlooWebSocket>,
     tx: WsSender,
+    file_transfer: FileTransferState,
     room_state: Rc<RefCell<RoomState>>,
     local_version: Rc<RefCell<u64>>,
     last_synced_version: Rc<RefCell<u64>>,
@@ -279,6 +293,8 @@ async fn process_messages(
     set_cursors: WriteSignal<HashMap<String, CursorSignals>>,
     messages_signal: RwSignal<Vec<ChatMessagePayload>>,
     state_events: RwSignal<Vec<StateEvent>>,
+    scenes_signal: RwSignal<Vec<Scene>>,
+    active_scene_id_signal: RwSignal<Option<String>>,
     conflict_signal: RwSignal<Option<SyncConflict>>,
     votings: RwSignal<HashMap<String, VotingState>>,
     voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
@@ -299,6 +315,7 @@ async fn process_messages(
                     handlers::handle_event(
                         event,
                         &tx,
+                        &file_transfer,
                         &room_state,
                         &local_version,
                         &last_synced_version,
@@ -308,6 +325,8 @@ async fn process_messages(
                         set_cursors,
                         messages_signal,
                         state_events,
+                        scenes_signal,
+                        active_scene_id_signal,
                         conflict_signal,
                         votings,
                         voting_results,

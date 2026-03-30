@@ -146,7 +146,7 @@ pub fn VotingActive(
                                                     <span style="color: #fbbf24; font-weight: bold;">
                                                         {t!(i18n, voting.time_remaining)}
                                                         {" "}
-                                                        {format!("{} сек", timer)}
+                                                        {format!("{} {}", timer, t_string!(i18n, voting.seconds_abbr))}
                                                     </span>
                                                 </div>
                                             }.into_any()
