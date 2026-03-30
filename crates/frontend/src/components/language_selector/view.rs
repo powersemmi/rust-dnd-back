@@ -1,3 +1,5 @@
+use super::model::{parse_locale, save_locale_to_storage};
+use super::view_model::LanguageSelectorViewModel;
 use crate::config::Theme;
 use crate::i18n::i18n::{Locale, use_i18n};
 use leptos::prelude::*;
@@ -5,30 +7,19 @@ use leptos::prelude::*;
 #[component]
 pub fn LanguageSelector(initial_locale: Locale, theme: Theme) -> impl IntoView {
     let i18n = use_i18n();
-    let (current_locale, set_current_locale) = signal(initial_locale);
+    let vm = LanguageSelectorViewModel::new(initial_locale);
 
-    // Set initial locale
+    // Apply the saved locale on mount
     leptos::task::spawn_local(async move {
         i18n.set_locale(initial_locale);
     });
 
     let on_change = move |ev: leptos::ev::Event| {
         let value = event_target_value(&ev);
-        let new_locale = if value == "ru" {
-            Locale::ru
-        } else {
-            Locale::en
-        };
-
-        i18n.set_locale(new_locale);
-        set_current_locale.set(new_locale);
-
-        // Save to localStorage
-        if let Some(window) = web_sys::window()
-            && let Ok(Some(storage)) = window.local_storage()
-        {
-            let _ = storage.set_item("locale", &value);
-        }
+        let locale = parse_locale(&value);
+        vm.current_locale.set(locale);
+        i18n.set_locale(locale);
+        save_locale_to_storage(&value);
     };
 
     let button_style = format!(
@@ -42,12 +33,7 @@ pub fn LanguageSelector(initial_locale: Locale, theme: Theme) -> impl IntoView {
             <select
                 on:change=on_change
                 style=button_style
-                prop:value=move || {
-                    match current_locale.get() {
-                        Locale::en => "en",
-                        Locale::ru => "ru",
-                    }
-                }
+                prop:value=move || vm.locale_code()
             >
                 <option value="en">"EN"</option>
                 <option value="ru">"RU"</option>

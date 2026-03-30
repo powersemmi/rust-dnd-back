@@ -1,6 +1,8 @@
+pub(crate) mod model;
 pub(crate) mod mouse_handler;
 mod navigation;
 mod state;
+pub(crate) mod view_model;
 
 pub use state::App;
 

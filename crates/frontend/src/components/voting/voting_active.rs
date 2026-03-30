@@ -1,4 +1,5 @@
 use super::types::VotingState;
+use super::voting_active_model::{compute_vote_counts, vote_percentage};
 use crate::config::Theme;
 use crate::i18n::i18n::{t, t_string, use_i18n};
 use leptos::logging::log;
@@ -118,12 +119,7 @@ pub fn VotingActive(
 
                         // Подсчитываем промежуточные результаты для отображения
                         let total_voted_before = votes.len() as u32;
-                        let mut vote_counts: HashMap<String, u32> = HashMap::new();
-                        for option_ids in votes.values() {
-                            for option_id in option_ids {
-                                *vote_counts.entry(option_id.clone()).or_insert(0) += 1;
-                            }
-                        }
+                        let vote_counts = compute_vote_counts(&votes);
                         let vote_counts_stored = StoredValue::new(vote_counts);
                         let total_voted_stored = StoredValue::new(total_voted_before);
 
@@ -159,7 +155,7 @@ pub fn VotingActive(
                                     </p>
 
                                     <For
-                                        each=move || options_stored.get_value()
+                                        each=move || { options_stored.get_value() }
                                         key=|opt| opt.id.clone()
                                         children=move |option| {
                                             let option_id = option.id.clone();
@@ -172,11 +168,7 @@ pub fn VotingActive(
                                             let vid_for_checked = vid_check.clone();
 
                                             let vote_count = vote_counts_stored.get_value().get(&option_id_stats).copied().unwrap_or(0);
-                                            let percentage = if total_voted_stored.get_value() > 0 {
-                                                (vote_count as f32 / total_voted_stored.get_value() as f32 * 100.0) as u32
-                                            } else {
-                                                0
-                                            };
+                                            let percentage = vote_percentage(vote_count, total_voted_stored.get_value());
 
                                             view! {
                                                 <div
@@ -310,7 +302,7 @@ pub fn VotingActive(
                                 </div>
 
                                 <For
-                                    each=move || results_stored.get_value()
+                                    each=move || { results_stored.get_value() }
                                     key=|r| r.option_id.clone()
                                     children=move |result| {
                                         let option_text = options_stored.get_value().iter()
@@ -324,11 +316,7 @@ pub fn VotingActive(
                                             })
                                             .unwrap_or_default();
 
-                                        let percentage = if total_voted > 0 {
-                                            (result.count as f32 / total_voted as f32 * 100.0) as u32
-                                        } else {
-                                            0
-                                        };
+                                        let percentage = vote_percentage(result.count, total_voted);
 
                                         let voters_opt = result.voters.clone();
                                         let is_anonymous = voting.is_anonymous;

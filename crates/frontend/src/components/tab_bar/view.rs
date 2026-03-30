@@ -1,28 +1,12 @@
+use super::model::TabItem;
 use crate::config::Theme;
 use leptos::prelude::*;
 
-#[derive(Clone)]
-pub struct TabItem<T> {
-    pub value: T,
-    pub label: String,
-    pub closable: bool,
-}
-
-impl<T> TabItem<T> {
-    pub fn new(value: T, label: impl Into<String>) -> Self {
-        Self {
-            value,
-            label: label.into(),
-            closable: false,
-        }
-    }
-
-    pub fn closable(mut self) -> Self {
-        self.closable = true;
-        self
-    }
-}
-
+/// A generic tab navigation bar.
+///
+/// `tabs` - a function returning the list of tab items (called reactively).
+/// `active_tab` - the currently selected tab value.
+/// `on_close` - optional callback fired when a closable tab's X is clicked.
 #[component]
 pub fn TabBar<T, F>(
     tabs: F,
@@ -36,7 +20,8 @@ where
 {
     view! {
         <div style=format!(
-            "display: flex; gap: 0.625rem; margin-bottom: 0.75rem; border-bottom: 0.125rem solid {}; padding: 0.5rem 0.75rem 0.5rem 0.75rem;",
+            "display: flex; gap: 0.625rem; margin-bottom: 0.75rem; \
+             border-bottom: 0.125rem solid {}; padding: 0.5rem 0.75rem 0.5rem 0.75rem;",
             theme.ui_bg_primary
         )>
             <For
@@ -51,7 +36,9 @@ where
                     view! {
                         <button
                             style=move || {
-                                let base = "padding: 0.5rem 1rem; border: none; border-radius: 0.25rem; cursor: pointer; font-size: 0.875rem; font-weight: 500; display: flex; align-items: center; gap: 0.5rem;";
+                                let base = "padding: 0.5rem 1rem; border: none; border-radius: 0.25rem; \
+                                            cursor: pointer; font-size: 0.875rem; font-weight: 500; \
+                                            display: flex; align-items: center; gap: 0.5rem;";
                                 if active_tab.get() == value_for_style.clone() {
                                     format!("{} background: {}; color: {};", base, theme.ui_button_primary, theme.ui_text_primary)
                                 } else {
@@ -73,7 +60,7 @@ where
                                             }
                                         }
                                     >
-                                        "×"
+                                        "x"
                                     </span>
                                 }.into_any()
                             } else {
