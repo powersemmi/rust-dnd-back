@@ -1,4 +1,5 @@
 pub mod chat;
+pub mod crypto;
 pub mod file;
 pub mod mouse;
 pub mod note;
@@ -9,6 +10,9 @@ pub mod sync;
 pub mod voting;
 
 pub use crate::events::chat::ChatMessagePayload;
+pub use crate::events::crypto::{
+    CryptoKeyAnnouncePayload, CryptoKeyWrapPayload, CryptoPayload, EncryptedPayloadKind,
+};
 pub use crate::events::file::{
     FileAbortPayload, FileAnnouncePayload, FileChunkPayload, FileRequestPayload,
 };
@@ -23,7 +27,8 @@ pub use crate::events::scene::{
     SceneUpdatePayload, Token, TokenMovePayload,
 };
 pub use crate::events::sync::{
-    SyncSnapshotPayload, SyncSnapshotRequestPayload, SyncVersionPayload,
+    SyncSnapshotPackedStatePayload, SyncSnapshotPayload, SyncSnapshotRequestPayload,
+    SyncVersionPayload,
 };
 pub use crate::events::voting::{
     PresenceAnnouncePayload, PresenceRequestPayload, PresenceResponsePayload, VotingCastPayload,
@@ -96,6 +101,13 @@ pub enum ClientEvent {
     #[serde(rename = "PRESENCE_ANNOUNCE")]
     PresenceAnnounce(PresenceAnnouncePayload),
 
+    #[serde(rename = "CRYPTO_KEY_ANNOUNCE")]
+    CryptoKeyAnnounce(CryptoKeyAnnouncePayload),
+    #[serde(rename = "CRYPTO_KEY_WRAP")]
+    CryptoKeyWrap(CryptoKeyWrapPayload),
+    #[serde(rename = "CRYPTO_PAYLOAD")]
+    CryptoPayload(CryptoPayload),
+
     #[serde(rename = "PING")]
     Ping,
 }
@@ -128,6 +140,9 @@ impl ClientEvent {
             ClientEvent::PresenceRequest(p) => p.validate(),
             ClientEvent::PresenceResponse(p) => p.validate(),
             ClientEvent::PresenceAnnounce(p) => p.validate(),
+            ClientEvent::CryptoKeyAnnounce(p) => p.validate(),
+            ClientEvent::CryptoKeyWrap(p) => p.validate(),
+            ClientEvent::CryptoPayload(p) => p.validate(),
             ClientEvent::SyncRequest => Ok(()),
             ClientEvent::Ping => Ok(()),
         }

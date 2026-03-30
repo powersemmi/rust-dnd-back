@@ -7,6 +7,8 @@ use shared::events::{ClientEvent, Params};
 ///
 /// **Client -> Server (Commands):**
 /// Отправляй JSON в таком формате в открытый сокет.
+/// Для защищённых типов (`chat`, `note`, `file`, `sync snapshot`) plaintext-протокол отключён:
+/// используются `CRYPTO_KEY_ANNOUNCE`, `CRYPTO_KEY_WRAP`, `CRYPTO_PAYLOAD`.
 ///
 /// **Server -> Client (Events):**
 /// Сервер будет присылать JSON в таком формате.
@@ -23,24 +25,29 @@ use shared::events::{ClientEvent, Params};
                     summary = "Перемещение мыши",
                     description = "Игрок двигает мышку по доске",
                     value = json!({
-                        "type": "MOUSE_MOVE_TOKEN",
+                        "type": "MOUSE_EVENT",
                         "data": {
                             "x": 150,
                             "y": 240,
+                            "mouse_event_type": "Move",
                             "user_id": "hero_aragorn_1"
                         }
                     })
                 )
             ),
             (
-                "Chat Message" = (
-                    summary = "Сообщение в чат",
-                    description = "Текстовое сообщение всем участникам",
+                "Encrypted Chat Payload" = (
+                    summary = "Зашифрованное сообщение",
+                    description = "Контент чата/заметок/файлов передаётся в CRYPTO_PAYLOAD",
                     value = json!({
-                        "type": "CHAT_MESSAGE",
+                        "type": "CRYPTO_PAYLOAD",
                         "data": {
-                            "text": "Я кидаю инициативу!",
-                            "user_id": "hero_aragorn_1"
+                            "version": 1,
+                            "key_id": "3e462f13-3941-4e7b-b8c6-b0c684f2f8f2",
+                            "sender_username": "hero_aragorn_1",
+                            "kind": "CHAT",
+                            "nonce_b64": "base64-nonce",
+                            "ciphertext_b64": "base64-ciphertext"
                         }
                     })
                 )

@@ -1,5 +1,7 @@
 use crate::components::statistics::StateEvent;
-use crate::components::websocket::{WsSender, storage, sync::SyncValidator, types::*, utils};
+use crate::components::websocket::{
+    SnapshotCodec, WsSender, storage, sync::SyncValidator, types::*, utils,
+};
 use leptos::logging::log;
 use leptos::prelude::*;
 use shared::events::{
@@ -194,9 +196,11 @@ pub fn handle_sync_announce(payload: SyncVersionPayload, ctx: &HandlerContext<'_
 pub fn handle_snapshot_request(
     payload: SyncSnapshotRequestPayload,
     tx: &WsSender,
+    snapshot_codec: &SnapshotCodec,
     room_state: &Rc<RefCell<RoomState>>,
     local_version: &Rc<RefCell<u64>>,
     my_username: &str,
+    room_name: &str,
     state_events: RwSignal<Vec<StateEvent>>,
 ) {
     // Отвечаем если это адресовано нам или broadcast (пустая строка)
@@ -206,10 +210,20 @@ pub fn handle_snapshot_request(
             payload.target_username.is_empty()
         );
         let state = room_state.borrow().clone();
-        let snapshot = ClientEvent::SyncSnapshot(SyncSnapshotPayload {
-            version: state.version,
-            state: state.clone(),
-        });
+        let snapshot_payload = match snapshot_codec.encode_payload(room_name, &state) {
+            Ok(snapshot_payload) => snapshot_payload,
+            Err(error) => {
+                log!("Failed to encode snapshot payload: {}", error);
+                utils::log_event(
+                    state_events,
+                    *local_version.borrow(),
+                    "SYNC_SNAPSHOT_ENCODE_FAILED",
+                    &format!("Failed to encode snapshot: {error}"),
+                );
+                return;
+            }
+        };
+        let snapshot = ClientEvent::SyncSnapshot(snapshot_payload);
         let _ = tx.try_send_event(snapshot);
 
         utils::log_event(
@@ -222,18 +236,44 @@ pub fn handle_snapshot_request(
 }
 
 pub fn handle_snapshot(payload: SyncSnapshotPayload, ctx: &HandlerContext<'_>) {
+    let decoded_state = match ctx.snapshot_codec.decode_payload(ctx.room_name, &payload) {
+        Ok(state) => state,
+        Err(error) => {
+            log!("Failed to decode snapshot payload: {}", error);
+            utils::log_event(
+                ctx.state_events,
+                *ctx.local_version.borrow(),
+                "SYNC_SNAPSHOT_DECODE_FAILED",
+                &format!("Failed to decode snapshot payload: {error}"),
+            );
+            return;
+        }
+    };
+    if payload.version != decoded_state.version {
+        log!(
+            "Snapshot version mismatch: payload version {}, decoded state version {}",
+            payload.version,
+            decoded_state.version
+        );
+    }
+
     // Проверяем, находимся ли мы в режиме сбора snapshots
     if *ctx.is_collecting_snapshots.borrow() {
+        let hash_preview = if decoded_state.current_hash.is_empty() {
+            "<empty>"
+        } else {
+            &decoded_state.current_hash[..8.min(decoded_state.current_hash.len())]
+        };
         log!(
             "📦 Collecting snapshot for analysis (v{}, hash: {}...)",
-            payload.state.version,
-            &payload.state.current_hash[..8]
+            decoded_state.version,
+            hash_preview
         );
 
         // Добавляем snapshot в коллекцию
         ctx.collected_snapshots
             .borrow_mut()
-            .push((ctx.my_username.to_string(), payload.state.clone()));
+            .push((ctx.my_username.to_string(), decoded_state.clone()));
 
         log!(
             "📊 Total collected snapshots: {}",
@@ -248,8 +288,8 @@ pub fn handle_snapshot(payload: SyncSnapshotPayload, ctx: &HandlerContext<'_>) {
     let local_synced = *ctx.last_synced_version.borrow();
     drop(local_state);
 
-    let remote_ver = payload.state.version;
-    let remote_hash = &payload.state.current_hash;
+    let remote_ver = decoded_state.version;
+    let remote_hash = &decoded_state.current_hash;
 
     log!(
         "Validating snapshot: local v{} (hash: {}), remote v{} (hash: {})",
@@ -268,18 +308,18 @@ pub fn handle_snapshot(payload: SyncSnapshotPayload, ctx: &HandlerContext<'_>) {
         // Применяем снапшот
         *ctx.local_version.borrow_mut() = remote_ver;
         *ctx.last_synced_version.borrow_mut() = remote_ver;
-        *ctx.room_state.borrow_mut() = payload.state.clone();
+        *ctx.room_state.borrow_mut() = decoded_state.clone();
 
-        ctx.messages_signal.set(payload.state.chat_history.clone());
+        ctx.messages_signal.set(decoded_state.chat_history.clone());
         ctx.public_notes_signal
-            .set(payload.state.public_notes.clone());
+            .set(decoded_state.public_notes.clone());
         ctx.file_transfer
-            .reconcile_chat_attachments(&payload.state.chat_history);
-        ctx.voting_results.set(payload.state.voting_results.clone());
-        ctx.scenes_signal.set(payload.state.scenes.clone());
+            .reconcile_chat_attachments(&decoded_state.chat_history);
+        ctx.voting_results.set(decoded_state.voting_results.clone());
+        ctx.scenes_signal.set(decoded_state.scenes.clone());
         ctx.active_scene_id_signal
-            .set(payload.state.active_scene_id.clone());
-        storage::save_state_in_background(ctx.room_name, &payload.state);
+            .set(decoded_state.active_scene_id.clone());
+        storage::save_state_in_background(ctx.room_name, &decoded_state);
 
         // Очищаем ожидание и закрываем окно конфликта
         *ctx.expected_snapshot_from.borrow_mut() = None;
@@ -305,18 +345,18 @@ pub fn handle_snapshot(payload: SyncSnapshotPayload, ctx: &HandlerContext<'_>) {
 
         *ctx.local_version.borrow_mut() = remote_ver;
         *ctx.last_synced_version.borrow_mut() = remote_ver;
-        *ctx.room_state.borrow_mut() = payload.state.clone();
+        *ctx.room_state.borrow_mut() = decoded_state.clone();
 
-        ctx.messages_signal.set(payload.state.chat_history.clone());
+        ctx.messages_signal.set(decoded_state.chat_history.clone());
         ctx.public_notes_signal
-            .set(payload.state.public_notes.clone());
+            .set(decoded_state.public_notes.clone());
         ctx.file_transfer
-            .reconcile_chat_attachments(&payload.state.chat_history);
-        ctx.voting_results.set(payload.state.voting_results.clone());
-        ctx.scenes_signal.set(payload.state.scenes.clone());
+            .reconcile_chat_attachments(&decoded_state.chat_history);
+        ctx.voting_results.set(decoded_state.voting_results.clone());
+        ctx.scenes_signal.set(decoded_state.scenes.clone());
         ctx.active_scene_id_signal
-            .set(payload.state.active_scene_id.clone());
-        storage::save_state_in_background(ctx.room_name, &payload.state);
+            .set(decoded_state.active_scene_id.clone());
+        storage::save_state_in_background(ctx.room_name, &decoded_state);
 
         ctx.conflict_signal.set(None);
 
@@ -331,7 +371,7 @@ pub fn handle_snapshot(payload: SyncSnapshotPayload, ctx: &HandlerContext<'_>) {
         let announce = ClientEvent::SyncVersionAnnounce(shared::events::SyncVersionPayload {
             username: String::new(), // Будет заполнено сервером
             version: remote_ver,
-            state_hash: payload.state.current_hash.clone(),
+            state_hash: decoded_state.current_hash.clone(),
             recent_hashes: vec![],
         });
         if ctx.tx.try_send_event(announce).is_ok() {
@@ -348,7 +388,7 @@ pub fn handle_snapshot(payload: SyncSnapshotPayload, ctx: &HandlerContext<'_>) {
         local_synced,
         remote_ver,
         remote_hash,
-        &payload.state,
+        &decoded_state,
     ) {
         Err(conflict) => {
             ctx.conflict_signal.set(Some(conflict.clone()));
@@ -368,18 +408,18 @@ pub fn handle_snapshot(payload: SyncSnapshotPayload, ctx: &HandlerContext<'_>) {
 
             *ctx.local_version.borrow_mut() = remote_ver;
             *ctx.last_synced_version.borrow_mut() = remote_ver;
-            *ctx.room_state.borrow_mut() = payload.state.clone();
+            *ctx.room_state.borrow_mut() = decoded_state.clone();
 
-            ctx.messages_signal.set(payload.state.chat_history.clone());
+            ctx.messages_signal.set(decoded_state.chat_history.clone());
             ctx.public_notes_signal
-                .set(payload.state.public_notes.clone());
+                .set(decoded_state.public_notes.clone());
             ctx.file_transfer
-                .reconcile_chat_attachments(&payload.state.chat_history);
-            ctx.voting_results.set(payload.state.voting_results.clone());
-            ctx.scenes_signal.set(payload.state.scenes.clone());
+                .reconcile_chat_attachments(&decoded_state.chat_history);
+            ctx.voting_results.set(decoded_state.voting_results.clone());
+            ctx.scenes_signal.set(decoded_state.scenes.clone());
             ctx.active_scene_id_signal
-                .set(payload.state.active_scene_id.clone());
-            storage::save_state_in_background(ctx.room_name, &payload.state);
+                .set(decoded_state.active_scene_id.clone());
+            storage::save_state_in_background(ctx.room_name, &decoded_state);
 
             // Очищаем конфликт при успешной синхронизации
             ctx.conflict_signal.set(None);
@@ -391,7 +431,7 @@ pub fn handle_snapshot(payload: SyncSnapshotPayload, ctx: &HandlerContext<'_>) {
                 &format!(
                     "Applied snapshot v{} ({} messages)",
                     remote_ver,
-                    payload.state.chat_history.len()
+                    decoded_state.chat_history.len()
                 ),
             );
         }

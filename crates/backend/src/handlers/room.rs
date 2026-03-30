@@ -14,7 +14,7 @@ use futures::{
 };
 use redis::aio::PubSub;
 use serde_json::json;
-use shared::events::{ClientEvent, Params};
+use shared::events::{ClientEvent, EncryptedPayloadKind, Params};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -51,6 +51,14 @@ async fn process_client_message(
         Err(error) => return Some(error),
     };
 
+    if is_plaintext_legacy_event(&event) {
+        return Some(
+            json!({ "error": "Plaintext protocol is disabled for this event type" })
+                .to_string()
+                .into(),
+        );
+    }
+
     match event {
         ClientEvent::Ping => Some(json!({ "type": "PONG" }).to_string().into()),
         _ => {
@@ -76,6 +84,20 @@ async fn process_client_message(
             None
         }
     }
+}
+
+fn is_plaintext_legacy_event(event: &ClientEvent) -> bool {
+    matches!(
+        event,
+        ClientEvent::ChatMessage(_)
+            | ClientEvent::NoteUpsert(_)
+            | ClientEvent::NoteDelete(_)
+            | ClientEvent::FileAnnounce(_)
+            | ClientEvent::FileRequest(_)
+            | ClientEvent::FileChunk(_)
+            | ClientEvent::FileAbort(_)
+            | ClientEvent::SyncSnapshot(_)
+    )
 }
 
 async fn publish_event(
@@ -176,6 +198,10 @@ fn classify_incoming_message(event: &ClientEvent) -> IncomingMessageKind {
     match event {
         ClientEvent::MouseClickPayload(_) => IncomingMessageKind::Mouse,
         ClientEvent::FileChunk(_) => IncomingMessageKind::FileChunk,
+        ClientEvent::CryptoPayload(payload) => match payload.kind {
+            EncryptedPayloadKind::FileChunk => IncomingMessageKind::FileChunk,
+            _ => IncomingMessageKind::General,
+        },
         _ => IncomingMessageKind::General,
     }
 }
@@ -300,4 +326,71 @@ pub async fn ws_room_handler(
         .max_frame_size(MAX_INBOUND_MESSAGE_SIZE_BYTES)
         .on_upgrade(move |socket| handle_socket(socket, params.room_id, claims.sub, state))
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shared::events::{
+        ChatMessagePayload, CryptoPayload, FileChunkPayload, SyncSnapshotPackedStatePayload,
+        SyncSnapshotPayload,
+    };
+
+    #[test]
+    fn plaintext_legacy_events_are_detected() {
+        let chat = ClientEvent::ChatMessage(ChatMessagePayload {
+            payload: "hello".to_string(),
+            username: "alice".to_string(),
+            attachments: Vec::new(),
+        });
+        assert!(is_plaintext_legacy_event(&chat));
+
+        let encrypted = ClientEvent::CryptoPayload(CryptoPayload {
+            version: 1,
+            key_id: "k1".to_string(),
+            sender_username: "alice".to_string(),
+            kind: EncryptedPayloadKind::Chat,
+            nonce_b64: "bm9uY2U=".to_string(),
+            ciphertext_b64: "Y2lwaGVy".to_string(),
+        });
+        assert!(!is_plaintext_legacy_event(&encrypted));
+
+        let snapshot = ClientEvent::SyncSnapshot(SyncSnapshotPayload {
+            version: 1,
+            packed_state: SyncSnapshotPackedStatePayload {
+                codec_version: 1,
+                compression: "gzip".to_string(),
+                payload_b64: "cGF5bG9hZA==".to_string(),
+            },
+        });
+        assert!(is_plaintext_legacy_event(&snapshot));
+    }
+
+    #[test]
+    fn encrypted_file_chunk_is_rate_limited_as_file_chunk() {
+        let encrypted_chunk = ClientEvent::CryptoPayload(CryptoPayload {
+            version: 1,
+            key_id: "k1".to_string(),
+            sender_username: "alice".to_string(),
+            kind: EncryptedPayloadKind::FileChunk,
+            nonce_b64: "bm9uY2U=".to_string(),
+            ciphertext_b64: "Y2lwaGVy".to_string(),
+        });
+        assert_eq!(
+            classify_incoming_message(&encrypted_chunk),
+            IncomingMessageKind::FileChunk
+        );
+
+        let plaintext_chunk = ClientEvent::FileChunk(FileChunkPayload {
+            hash: "h".to_string(),
+            requester: "alice".to_string(),
+            chunk_index: 0,
+            total_chunks: 1,
+            data: "x".to_string(),
+        });
+        assert_eq!(
+            classify_incoming_message(&plaintext_chunk),
+            IncomingMessageKind::FileChunk
+        );
+    }
 }

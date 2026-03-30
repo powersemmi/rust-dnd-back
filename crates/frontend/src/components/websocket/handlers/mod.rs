@@ -10,7 +10,7 @@ mod voting;
 
 use crate::components::statistics::StateEvent;
 use crate::components::voting::VotingState;
-use crate::components::websocket::{FileTransferState, WsSender, types::*};
+use crate::components::websocket::{FileTransferState, SnapshotCodec, WsSender, types::*};
 use leptos::prelude::*;
 use shared::events::{
     ChatMessagePayload, ClientEvent, NotePayload, RoomState, Scene, VotingResultPayload,
@@ -21,6 +21,7 @@ use std::rc::Rc;
 
 pub struct HandlerContext<'a> {
     pub tx: &'a WsSender,
+    pub snapshot_codec: &'a SnapshotCodec,
     pub file_transfer: &'a FileTransferState,
     pub room_state: &'a Rc<RefCell<RoomState>>,
     pub local_version: &'a Rc<RefCell<u64>>,
@@ -87,6 +88,15 @@ pub fn handle_event(event: ClientEvent, ctx: &HandlerContext<'_>) {
         }
         ClientEvent::SyncRequest => {
             sync::handle_sync_request(ctx.tx, ctx.room_state, ctx.local_version, ctx.my_username);
+            let announce_event = ctx
+                .tx
+                .crypto_state()
+                .lock()
+                .map(|state| state.key_announce_event())
+                .ok();
+            if let Some(announce_event) = announce_event {
+                let _ = ctx.tx.try_send_event(announce_event);
+            }
             ctx.file_transfer.reannounce_scene_files(
                 ctx.room_name.to_string(),
                 ctx.my_username.to_string(),
@@ -98,9 +108,11 @@ pub fn handle_event(event: ClientEvent, ctx: &HandlerContext<'_>) {
         ClientEvent::SyncSnapshotRequest(payload) => sync::handle_snapshot_request(
             payload,
             ctx.tx,
+            ctx.snapshot_codec,
             ctx.room_state,
             ctx.local_version,
             ctx.my_username,
+            ctx.room_name,
             ctx.state_events,
         ),
         ClientEvent::SyncSnapshot(payload) => sync::handle_snapshot(payload, ctx),

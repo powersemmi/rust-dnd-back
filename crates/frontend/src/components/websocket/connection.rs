@@ -1,6 +1,8 @@
 use crate::components::statistics::StateEvent;
 use crate::components::voting::VotingState;
-use crate::components::websocket::{FileTransferState, storage, types::CursorSignals};
+use crate::components::websocket::{
+    FileTransferState, RoomCryptoState, SnapshotCodec, storage, types::CursorSignals,
+};
 use crate::config;
 use futures::{FutureExt, SinkExt, StreamExt};
 use gloo_net::websocket::{Message, futures::WebSocket as GlooWebSocket};
@@ -10,12 +12,13 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use rand::seq::IndexedRandom;
 use shared::events::{
-    ChatMessagePayload, ClientEvent, NotePayload, RoomState, Scene, SyncSnapshotRequestPayload,
-    VotingResultPayload,
+    ChatMessagePayload, ClientEvent, EncryptedPayloadKind, NotePayload, RoomState, Scene,
+    SyncSnapshotRequestPayload, VotingResultPayload,
 };
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use super::handlers;
 use super::types::{ConflictResolutionHandle, SyncConflict};
@@ -37,6 +40,7 @@ pub struct WsSender {
     high: futures::channel::mpsc::Sender<Message>,
     normal: futures::channel::mpsc::Sender<Message>,
     low: futures::channel::mpsc::Sender<Message>,
+    crypto: Arc<Mutex<RoomCryptoState>>,
 }
 
 impl WsSender {
@@ -44,8 +48,18 @@ impl WsSender {
         high: futures::channel::mpsc::Sender<Message>,
         normal: futures::channel::mpsc::Sender<Message>,
         low: futures::channel::mpsc::Sender<Message>,
+        crypto: Arc<Mutex<RoomCryptoState>>,
     ) -> Self {
-        Self { high, normal, low }
+        Self {
+            high,
+            normal,
+            low,
+            crypto,
+        }
+    }
+
+    pub fn crypto_state(&self) -> Arc<Mutex<RoomCryptoState>> {
+        self.crypto.clone()
     }
 
     pub fn try_send_event(&self, event: ClientEvent) -> Result<(), String> {
@@ -58,12 +72,26 @@ impl WsSender {
         event: ClientEvent,
         priority: OutboundPriority,
     ) -> Result<(), String> {
-        let json = serde_json::to_string(&event)
-            .map_err(|error| format!("failed to serialize websocket event: {error}"))?;
-        self.try_send_text_with_priority(json, priority)
+        if RoomCryptoState::should_encrypt_event(&event) {
+            let outbound = self
+                .crypto
+                .lock()
+                .map_err(|_| "failed to lock room crypto state".to_string())?
+                .prepare_encrypted_events(&event)?;
+            for item in outbound {
+                let item_priority = match item {
+                    ClientEvent::CryptoPayload(_) => priority,
+                    _ => OutboundPriority::High,
+                };
+                self.send_plain_event_with_priority(item, item_priority)?;
+            }
+            return Ok(());
+        }
+
+        self.send_plain_event_with_priority(event, priority)
     }
 
-    pub fn try_send_text_with_priority(
+    fn try_send_text_with_priority(
         &self,
         text: String,
         priority: OutboundPriority,
@@ -80,6 +108,16 @@ impl WsSender {
             .map_err(|error| format!("failed to enqueue {priority:?} websocket message: {error:?}"))
     }
 
+    fn send_plain_event_with_priority(
+        &self,
+        event: ClientEvent,
+        priority: OutboundPriority,
+    ) -> Result<(), String> {
+        let json = serde_json::to_string(&event)
+            .map_err(|error| format!("failed to serialize websocket event: {error}"))?;
+        self.try_send_text_with_priority(json, priority)
+    }
+
     fn priority_for_event(event: &ClientEvent) -> OutboundPriority {
         match event {
             ClientEvent::Ping
@@ -89,6 +127,13 @@ impl WsSender {
             | ClientEvent::SyncSnapshotRequest(_)
             | ClientEvent::SyncSnapshot(_) => OutboundPriority::High,
             ClientEvent::FileChunk(_) => OutboundPriority::Low,
+            ClientEvent::CryptoPayload(payload) => match payload.kind {
+                EncryptedPayloadKind::FileChunk => OutboundPriority::Low,
+                EncryptedPayloadKind::Chat
+                | EncryptedPayloadKind::Note
+                | EncryptedPayloadKind::Sync => OutboundPriority::High,
+                EncryptedPayloadKind::FileControl => OutboundPriority::Normal,
+            },
             ClientEvent::RoomState(_)
             | ClientEvent::NoteUpsert(_)
             | ClientEvent::NoteDelete(_)
@@ -107,7 +152,9 @@ impl WsSender {
             | ClientEvent::VotingEnd(_)
             | ClientEvent::PresenceRequest(_)
             | ClientEvent::PresenceResponse(_)
-            | ClientEvent::PresenceAnnounce(_) => OutboundPriority::Normal,
+            | ClientEvent::PresenceAnnounce(_)
+            | ClientEvent::CryptoKeyAnnounce(_)
+            | ClientEvent::CryptoKeyWrap(_) => OutboundPriority::Normal,
         }
     }
 }
@@ -141,6 +188,7 @@ pub struct ConnectWebSocketArgs {
 
 struct MessageProcessingContext {
     tx: WsSender,
+    snapshot_codec: SnapshotCodec,
     file_transfer: FileTransferState,
     room_state: Rc<RefCell<RoomState>>,
     local_version: Rc<RefCell<u64>>,
@@ -176,6 +224,7 @@ impl MessageProcessingContext {
     fn handler_context(&self) -> handlers::HandlerContext<'_> {
         handlers::HandlerContext {
             tx: &self.tx,
+            snapshot_codec: &self.snapshot_codec,
             file_transfer: &self.file_transfer,
             room_state: &self.room_state,
             local_version: &self.local_version,
@@ -255,6 +304,8 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
     let room_name_for_storage = room_name.clone();
     let room_name_clone = room_name.clone();
     let my_username_clone = my_username.clone();
+    let my_username_for_crypto = my_username.clone();
+    let snapshot_codec = SnapshotCodec::new();
 
     // Построение WebSocket URL
     let ws_url = build_ws_url(&config, &room_name, &jwt_token);
@@ -287,7 +338,11 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
                     futures::channel::mpsc::channel::<Message>(NORMAL_PRIORITY_QUEUE_CAPACITY);
                 let (low_tx, low_rx) =
                     futures::channel::mpsc::channel::<Message>(LOW_PRIORITY_QUEUE_CAPACITY);
-                let tx = WsSender::new(high_tx, normal_tx, low_tx);
+                let crypto_state = Arc::new(Mutex::new(RoomCryptoState::new(
+                    &room_name,
+                    &my_username_for_crypto,
+                )));
+                let tx = WsSender::new(high_tx, normal_tx, low_tx, crypto_state);
                 set_ws_sender.set(Some(tx.clone()));
 
                 // Устанавливаем callback для разрешения конфликта
@@ -342,6 +397,15 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
 
                 spawn_local(run_outbound_scheduler(write, high_rx, normal_rx, low_rx));
 
+                let announce_event = tx
+                    .crypto_state()
+                    .lock()
+                    .map(|state| state.key_announce_event())
+                    .ok();
+                if let Some(announce_event) = announce_event {
+                    let _ = tx.try_send_event(announce_event);
+                }
+
                 // Инициализация синхронизации
                 let sync_candidates = init_sync(&tx);
 
@@ -364,6 +428,7 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
                     read,
                     MessageProcessingContext {
                         tx,
+                        snapshot_codec: snapshot_codec.clone(),
                         file_transfer,
                         room_state,
                         local_version,
@@ -608,12 +673,67 @@ async fn process_messages(
     mut read: futures::stream::SplitStream<GlooWebSocket>,
     context: MessageProcessingContext,
 ) {
+    let crypto_state = context.tx.crypto_state();
+
     while let Some(msg) = read.next().await {
         match msg {
             Ok(Message::Text(text)) => {
                 if let Ok(event) = serde_json::from_str::<ClientEvent>(&text) {
-                    let handler_context = context.handler_context();
-                    handlers::handle_event(event, &handler_context);
+                    match event {
+                        ClientEvent::CryptoKeyAnnounce(payload) => {
+                            let outbound = crypto_state
+                                .lock()
+                                .map_err(|_| "failed to lock room crypto state".to_string())
+                                .and_then(|mut state| state.handle_key_announce(&payload));
+                            match outbound {
+                                Ok(events) => {
+                                    for event in events {
+                                        let _ = context.tx.try_send_event(event);
+                                    }
+                                }
+                                Err(error) => {
+                                    log!("Failed to process CRYPTO_KEY_ANNOUNCE: {}", error)
+                                }
+                            }
+                        }
+                        ClientEvent::CryptoKeyWrap(payload) => {
+                            let decrypted = crypto_state
+                                .lock()
+                                .map_err(|_| "failed to lock room crypto state".to_string())
+                                .and_then(|mut state| state.handle_key_wrap(&payload));
+                            match decrypted {
+                                Ok(events) => {
+                                    for event in events {
+                                        let handler_context = context.handler_context();
+                                        handlers::handle_event(event, &handler_context);
+                                    }
+                                }
+                                Err(error) => log!("Failed to process CRYPTO_KEY_WRAP: {}", error),
+                            }
+                        }
+                        ClientEvent::CryptoPayload(payload) => {
+                            let decrypted = crypto_state
+                                .lock()
+                                .map_err(|_| "failed to lock room crypto state".to_string())
+                                .and_then(|mut state| state.decrypt_payload(&payload));
+                            match decrypted {
+                                Ok(Some(event)) => {
+                                    let handler_context = context.handler_context();
+                                    handlers::handle_event(event, &handler_context);
+                                }
+                                Ok(None) => {}
+                                Err(error) => log!("Failed to decrypt CRYPTO_PAYLOAD: {}", error),
+                            }
+                        }
+                        other => {
+                            if RoomCryptoState::should_encrypt_event(&other) {
+                                log!("Blocked legacy plaintext event: {:?}", other);
+                                continue;
+                            }
+                            let handler_context = context.handler_context();
+                            handlers::handle_event(other, &handler_context);
+                        }
+                    }
                 } else {
                     log!("Failed to parse event: {}", text);
                 }

@@ -1,13 +1,17 @@
 mod connection;
+mod crypto;
 mod file_transfer;
 mod handlers;
+mod snapshot_codec;
 mod storage;
 mod sync;
 mod types;
 mod utils;
 
 pub use connection::{ConnectWebSocketArgs, OutboundPriority, WsSender, connect_websocket};
+pub(crate) use crypto::RoomCryptoState;
 pub use file_transfer::{CHAT_FILE_INPUT_ACCEPT, FileTransferStage, FileTransferState};
+pub(crate) use snapshot_codec::SnapshotCodec;
 pub(crate) use storage::{
     StoredNoteBucket, StoredTokenLibraryItem, delete_note, delete_state, delete_token_library_item,
     load_notes, load_token_library, move_state, save_note, save_token_library_item,
