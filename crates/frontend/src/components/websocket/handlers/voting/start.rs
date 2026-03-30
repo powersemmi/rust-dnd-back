@@ -1,27 +1,16 @@
-use crate::components::statistics::StateEvent;
 use crate::components::voting::VotingState;
-use crate::components::websocket::{WsSender, utils};
-use gloo_net::websocket::Message;
+use crate::components::websocket::utils;
 use gloo_timers::future::TimeoutFuture;
 use js_sys;
 use leptos::logging::log;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use shared::events::{ClientEvent, voting::VotingStartPayload};
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 
-pub fn handle_voting_start(
-    payload: VotingStartPayload,
-    votings: RwSignal<HashMap<String, VotingState>>,
-    tx: &WsSender,
-    my_username: &str,
-    local_version: &Rc<RefCell<u64>>,
-    state_events: RwSignal<Vec<StateEvent>>,
-    has_statistics_notification: RwSignal<bool>,
-    notification_count: RwSignal<u32>,
-) {
+use super::super::HandlerContext;
+
+pub fn handle_voting_start(payload: VotingStartPayload, ctx: &HandlerContext<'_>) {
     log!(
         "Voting started: {} (id: {})",
         payload.question,
@@ -31,20 +20,18 @@ pub fn handle_voting_start(
     let timer_seconds = payload.timer_seconds;
 
     // Устанавливаем уведомление о новом голосовании и увеличиваем счётчик
-    has_statistics_notification.set(true);
-    notification_count.update(|count| *count += 1);
+    ctx.has_statistics_notification.set(true);
+    ctx.notification_count.update(|count| *count += 1);
 
     // Отправляем presence response
     let request_id = format!("voting_{}", voting_id);
     let response = ClientEvent::PresenceResponse(shared::events::PresenceResponsePayload {
         request_id,
-        user: my_username.to_string(),
+        user: ctx.my_username.to_string(),
     });
-    if let Ok(json) = serde_json::to_string(&response) {
-        let _ = tx.clone().try_send(Message::Text(json));
-    }
+    let _ = ctx.tx.try_send_event(response);
 
-    votings.update(|map| {
+    ctx.votings.update(|map| {
         log!(
             "Adding voting {} to votings map (current size: {})",
             voting_id,
@@ -64,8 +51,8 @@ pub fn handle_voting_start(
     });
 
     utils::log_event(
-        state_events,
-        *local_version.borrow(),
+        ctx.state_events,
+        *ctx.local_version.borrow(),
         "VOTING_START",
         &format!(
             "Voting started: {} (by {})",
@@ -76,6 +63,7 @@ pub fn handle_voting_start(
     // Запускаем таймер если есть
     if let Some(seconds) = timer_seconds {
         let voting_id_timer = voting_id.clone();
+        let votings = ctx.votings;
         spawn_local(async move {
             let mut remaining = seconds as i32;
             // Считаем до 0, затем ещё 5 секунд ожидания (отрицательные значения)

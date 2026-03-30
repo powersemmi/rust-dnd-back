@@ -150,26 +150,28 @@ pub fn App() -> impl IntoView {
     let on_switch_to_login = StoredValue::new(on_switch_to_login);
 
     let on_room_selected = StoredValue::new(create_room_selected_callback(
-        set_room_id,
-        set_app_state,
-        jwt_token,
-        username,
-        file_transfer.clone(),
-        set_ws_sender,
-        set_cursors,
-        messages,
-        state_events,
-        scenes,
-        active_scene_id,
-        conflict_signal,
-        votings,
-        voting_results,
-        has_statistics_notification,
-        notification_count,
-        has_chat_notification,
-        chat_notification_count,
-        cfg,
-        conflict_resolution_handle.clone(),
+        super::navigation::RoomSelectedCallbackArgs {
+            set_room_id,
+            set_app_state,
+            jwt_token,
+            username,
+            file_transfer: file_transfer.clone(),
+            set_ws_sender,
+            set_cursors,
+            messages,
+            state_events,
+            scenes,
+            active_scene_id,
+            conflict_signal,
+            votings,
+            voting_results,
+            has_statistics_notification,
+            notification_count,
+            has_chat_notification,
+            chat_notification_count,
+            cfg,
+            conflict_resolution_handle: conflict_resolution_handle.clone(),
+        },
     ));
 
     {
@@ -201,12 +203,12 @@ pub fn App() -> impl IntoView {
         }
 
         // Проверяем, что фокус не на input/textarea элементах
-        if let Some(target) = ev.target() {
-            if let Some(element) = target.dyn_ref::<web_sys::HtmlElement>() {
-                let tag_name = element.tag_name().to_lowercase();
-                if tag_name == "input" || tag_name == "textarea" {
-                    return;
-                }
+        if let Some(target) = ev.target()
+            && let Some(element) = target.dyn_ref::<web_sys::HtmlElement>()
+        {
+            let tag_name = element.tag_name().to_lowercase();
+            if tag_name == "input" || tag_name == "textarea" {
+                return;
             }
         }
 
@@ -252,16 +254,14 @@ pub fn App() -> impl IntoView {
 
     // Effect для автофокуса на главный div при подключении
     Effect::new(move || {
-        if app_state.get() == AppState::Connected {
-            if let Some(window) = web_sys::window() {
-                if let Some(document) = window.document() {
-                    if let Some(element) = document.get_element_by_id("main-app-container") {
-                        let _ = element
-                            .dyn_ref::<web_sys::HtmlElement>()
-                            .map(|el| el.focus());
-                    }
-                }
-            }
+        if app_state.get() == AppState::Connected
+            && let Some(window) = web_sys::window()
+            && let Some(document) = window.document()
+            && let Some(element) = document.get_element_by_id("main-app-container")
+        {
+            let _ = element
+                .dyn_ref::<web_sys::HtmlElement>()
+                .map(|el| el.focus());
         }
     });
 
@@ -404,7 +404,7 @@ pub fn App() -> impl IntoView {
                             username=username
                             on_create_voting=move |mut payload| {
                                 payload.creator = username.get();
-                                if let Some(mut sender) = ws_sender.get() {
+                                if let Some(sender) = ws_sender.get() {
                                     // Отправляем presence request чтобы собрать участников
                                     let request_id = format!("voting_{}", payload.voting_id);
                                     let presence_req = shared::events::PresenceRequestPayload {
@@ -412,15 +412,11 @@ pub fn App() -> impl IntoView {
                                         requester: username.get(),
                                     };
                                     let event = shared::events::ClientEvent::PresenceRequest(presence_req);
-                                    if let Ok(json) = serde_json::to_string(&event) {
-                                        let _ = sender.try_send(gloo_net::websocket::Message::Text(json.clone()));
-                                    }
+                                    let _ = sender.try_send_event(event);
 
                                     // Отправляем событие начала голосования
                                     let event = shared::events::ClientEvent::VotingStart(payload);
-                                    if let Ok(json) = serde_json::to_string(&event) {
-                                        let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
-                                    }
+                                    let _ = sender.try_send_event(event);
                                 }
                             }
                             on_submit_vote={
@@ -432,10 +428,8 @@ pub fn App() -> impl IntoView {
                                         selected_option_ids,
                                     };
 
-                                    if let Some(mut sender) = ws_sender.get() {
-                                        if let Ok(json) = serde_json::to_string(&shared::events::ClientEvent::VotingCast(payload)) {
-                                            let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
-                                        }
+                                    if let Some(sender) = ws_sender.get() {
+                                        let _ = sender.try_send_event(shared::events::ClientEvent::VotingCast(payload));
                                     }
 
                                     voted_in.update(|set| {
@@ -472,7 +466,7 @@ pub fn App() -> impl IntoView {
                             on_focus=Callback::new(move |_| active_window.set(ActiveWindow::Voting))
                             on_create_voting=move |mut payload| {
                                 payload.creator = username.get();
-                                if let Some(mut sender) = ws_sender.get() {
+                                if let Some(sender) = ws_sender.get() {
                                     // Отправляем presence request чтобы собрать участников
                                     let request_id = format!("voting_{}", payload.voting_id);
                                     let presence_req = shared::events::PresenceRequestPayload {
@@ -480,15 +474,11 @@ pub fn App() -> impl IntoView {
                                         requester: username.get(),
                                     };
                                     let event = shared::events::ClientEvent::PresenceRequest(presence_req);
-                                    if let Ok(json) = serde_json::to_string(&event) {
-                                        let _ = sender.try_send(gloo_net::websocket::Message::Text(json.clone()));
-                                    }
+                                    let _ = sender.try_send_event(event);
 
                                     // Отправляем событие начала голосования
                                     let event = shared::events::ClientEvent::VotingStart(payload);
-                                    if let Ok(json) = serde_json::to_string(&event) {
-                                        let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
-                                    }
+                                    let _ = sender.try_send_event(event);
                                 }
                             }
                             theme=theme.get_value()

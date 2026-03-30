@@ -1,40 +1,18 @@
-use crate::components::statistics::StateEvent;
 use crate::components::voting::VotingState;
-use crate::components::websocket::{WsSender, storage, types::SyncConflict, utils};
+use crate::components::websocket::{storage, utils};
 use leptos::logging::log;
 use leptos::prelude::*;
-use shared::events::{ChatMessagePayload, RoomState, Scene, VotingResultPayload};
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
+use shared::events::VotingResultPayload;
 
+use super::super::HandlerContext;
 use super::{conflict, hash_select};
 
-#[allow(clippy::too_many_arguments)]
-pub fn handle_voting_result(
-    payload: VotingResultPayload,
-    votings: RwSignal<HashMap<String, VotingState>>,
-    voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
-    room_state: &Rc<RefCell<RoomState>>,
-    local_version: &Rc<RefCell<u64>>,
-    last_synced_version: &Rc<RefCell<u64>>,
-    room_name: &str,
-    state_events: RwSignal<Vec<StateEvent>>,
-    tx: &WsSender,
-    my_username: &str,
-    expected_snapshot_from: &Rc<RefCell<Option<String>>>,
-    collected_snapshots: &Rc<RefCell<Vec<(String, RoomState)>>>,
-    _is_collecting_snapshots: &Rc<RefCell<bool>>,
-    messages_signal: RwSignal<Vec<ChatMessagePayload>>,
-    scenes_signal: RwSignal<Vec<Scene>>,
-    active_scene_id_signal: RwSignal<Option<String>>,
-    conflict_signal: RwSignal<Option<SyncConflict>>,
-) {
+pub fn handle_voting_result(payload: VotingResultPayload, ctx: &HandlerContext<'_>) {
     log!("🎯 VOTING RESULT RECEIVED for: {}", payload.voting_id);
     log!("Voting results received for: {}", payload.voting_id);
 
     // Обновляем текущее состояние голосования
-    votings.update(|map| {
+    ctx.votings.update(|map| {
         if let Some(state) = map.get(&payload.voting_id) {
             let voting_clone = match state {
                 VotingState::Active { voting, .. } => voting.clone(),
@@ -53,13 +31,13 @@ pub fn handle_voting_result(
     });
 
     // Сохраняем результаты в статистику
-    voting_results.update(|results| {
+    ctx.voting_results.update(|results| {
         results.insert(payload.voting_id.clone(), payload.clone());
     });
 
     // Сохраняем результаты в RoomState
     let current_ver = {
-        let mut state = room_state.borrow_mut();
+        let mut state = ctx.room_state.borrow_mut();
         state
             .voting_results
             .insert(payload.voting_id.clone(), payload.clone());
@@ -67,13 +45,13 @@ pub fn handle_voting_result(
         state.version
     };
 
-    *local_version.borrow_mut() = current_ver;
-    *last_synced_version.borrow_mut() = current_ver;
+    *ctx.local_version.borrow_mut() = current_ver;
+    *ctx.last_synced_version.borrow_mut() = current_ver;
 
-    storage::save_state_in_background(room_name, &room_state.borrow());
+    storage::save_state_in_background(ctx.room_name, &ctx.room_state.borrow());
 
     utils::log_event(
-        state_events,
+        ctx.state_events,
         current_ver,
         "VOTING_RESULT",
         &format!("Voting {} completed", payload.voting_id),
@@ -83,28 +61,15 @@ pub fn handle_voting_result(
     if payload.voting_id.starts_with("conflict_vote_") {
         conflict::handle_conflict_voting_result(
             payload.clone(),
-            votings,
-            tx,
-            my_username,
-            expected_snapshot_from,
+            ctx.votings,
+            ctx.tx,
+            ctx.my_username,
+            ctx.expected_snapshot_from,
         );
     }
 
     // Проверяем, является ли это голосованием для выбора хеша
     if payload.voting_id.starts_with("hash_select_") {
-        hash_select::handle_hash_selection_voting_result(
-            payload,
-            collected_snapshots,
-            local_version,
-            last_synced_version,
-            room_state,
-            room_name,
-            messages_signal,
-            scenes_signal,
-            active_scene_id_signal,
-            voting_results,
-            conflict_signal,
-            tx,
-        );
+        hash_select::handle_hash_selection_voting_result(payload, ctx);
     }
 }

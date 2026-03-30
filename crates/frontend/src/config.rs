@@ -1,4 +1,4 @@
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Config {
     pub theme: Theme,
     pub api: Api,
@@ -30,15 +30,6 @@ pub struct Api {
     pub back_url: &'static str,
     pub ws_path: &'static str,
     pub api_path: &'static str,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            theme: Theme::default(),
-            api: Api::default(),
-        }
-    }
 }
 
 const CURSOR_SIZE_STR: &str = env!("CURSOR_SIZE");

@@ -1,8 +1,8 @@
 use crate::components::statistics::StateEvent;
 use crate::components::voting::VotingState;
 use crate::components::websocket::{
-    ConflictResolutionHandle, CursorSignals, FileTransferState, SyncConflict, WsSender,
-    connect_websocket,
+    ConflictResolutionHandle, ConnectWebSocketArgs, CursorSignals, FileTransferState, SyncConflict,
+    WsSender, connect_websocket,
 };
 use crate::config;
 use crate::utils::{auth, token_refresh};
@@ -54,29 +54,53 @@ pub fn create_navigation_callbacks(
     (on_registered, on_switch_to_register, on_switch_to_login)
 }
 
+pub struct RoomSelectedCallbackArgs {
+    pub set_room_id: WriteSignal<String>,
+    pub set_app_state: WriteSignal<AppState>,
+    pub jwt_token: ReadSignal<String>,
+    pub username: ReadSignal<String>,
+    pub file_transfer: FileTransferState,
+    pub set_ws_sender: WriteSignal<Option<WsSender>>,
+    pub set_cursors: WriteSignal<HashMap<String, CursorSignals>>,
+    pub messages: RwSignal<Vec<ChatMessagePayload>>,
+    pub state_events: RwSignal<Vec<StateEvent>>,
+    pub scenes: RwSignal<Vec<Scene>>,
+    pub active_scene_id: RwSignal<Option<String>>,
+    pub conflict_signal: RwSignal<Option<SyncConflict>>,
+    pub votings: RwSignal<HashMap<String, VotingState>>,
+    pub voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
+    pub has_statistics_notification: RwSignal<bool>,
+    pub notification_count: RwSignal<u32>,
+    pub has_chat_notification: RwSignal<bool>,
+    pub chat_notification_count: RwSignal<u32>,
+    pub cfg: StoredValue<config::Config>,
+    pub conflict_resolution_handle: ConflictResolutionHandle,
+}
+
 /// Создает callback для выбора комнаты и подключения к WebSocket
-pub fn create_room_selected_callback(
-    set_room_id: WriteSignal<String>,
-    set_app_state: WriteSignal<AppState>,
-    jwt_token: ReadSignal<String>,
-    username: ReadSignal<String>,
-    file_transfer: FileTransferState,
-    set_ws_sender: WriteSignal<Option<WsSender>>,
-    set_cursors: WriteSignal<HashMap<String, CursorSignals>>,
-    messages: RwSignal<Vec<ChatMessagePayload>>,
-    state_events: RwSignal<Vec<StateEvent>>,
-    scenes: RwSignal<Vec<Scene>>,
-    active_scene_id: RwSignal<Option<String>>,
-    conflict_signal: RwSignal<Option<SyncConflict>>,
-    votings: RwSignal<HashMap<String, VotingState>>,
-    voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
-    has_statistics_notification: RwSignal<bool>,
-    notification_count: RwSignal<u32>,
-    has_chat_notification: RwSignal<bool>,
-    chat_notification_count: RwSignal<u32>,
-    cfg: StoredValue<config::Config>,
-    conflict_resolution_handle: ConflictResolutionHandle,
-) -> impl Fn(String) + Clone {
+pub fn create_room_selected_callback(args: RoomSelectedCallbackArgs) -> impl Fn(String) + Clone {
+    let RoomSelectedCallbackArgs {
+        set_room_id,
+        set_app_state,
+        jwt_token,
+        username,
+        file_transfer,
+        set_ws_sender,
+        set_cursors,
+        messages,
+        state_events,
+        scenes,
+        active_scene_id,
+        conflict_signal,
+        votings,
+        voting_results,
+        has_statistics_notification,
+        notification_count,
+        has_chat_notification,
+        chat_notification_count,
+        cfg,
+        conflict_resolution_handle,
+    } = args;
     let handle_clone = conflict_resolution_handle.clone();
     move |selected_room_id: String| {
         file_transfer.reset();
@@ -84,17 +108,17 @@ pub fn create_room_selected_callback(
         set_app_state.set(AppState::Connected);
 
         // Подключаемся к WebSocket
-        connect_websocket(
-            selected_room_id,
-            jwt_token.get(),
-            username.get_untracked(),
-            file_transfer.clone(),
+        connect_websocket(ConnectWebSocketArgs {
+            room_name: selected_room_id,
+            jwt_token: jwt_token.get(),
+            my_username: username.get_untracked(),
+            file_transfer: file_transfer.clone(),
             set_ws_sender,
             set_cursors,
-            messages,
+            messages_signal: messages,
             state_events,
-            scenes,
-            active_scene_id,
+            scenes_signal: scenes,
+            active_scene_id_signal: active_scene_id,
             conflict_signal,
             votings,
             voting_results,
@@ -102,8 +126,8 @@ pub fn create_room_selected_callback(
             notification_count,
             has_chat_notification,
             chat_notification_count,
-            cfg.get_value(),
-            handle_clone.clone(),
-        );
+            config: cfg.get_value(),
+            conflict_resolution_handle: handle_clone.clone(),
+        });
     }
 }

@@ -1,6 +1,5 @@
 use crate::components::voting::VotingState;
 use crate::components::websocket::WsSender;
-use gloo_net::websocket::Message;
 use gloo_timers::future::TimeoutFuture;
 use leptos::logging::log;
 use leptos::prelude::*;
@@ -77,7 +76,7 @@ pub fn handle_conflict_voting_result(
                             if my_username == first_voter {
                                 log!("🙋 I am the first voter ({}), requesting snapshot from creator {}", my_username, creator);
 
-                                let mut tx_clone = tx.clone();
+                                let tx_clone = tx.clone();
                                 let creator_clone = creator.clone();
                                 spawn_local(async move {
                                     // Небольшая задержка для стабилизации
@@ -88,10 +87,7 @@ pub fn handle_conflict_voting_result(
                                         target_username: creator_clone.clone(),
                                     });
                                     log!("📤 Sending SyncSnapshotRequest to {}", creator_clone);
-                                    if let Ok(json) = serde_json::to_string(&req) {
-                                        log!("📨 Request JSON: {}", json);
-                                        let _ = tx_clone.try_send(Message::Text(json));
-                                    }
+                                    let _ = tx_clone.try_send_event(req);
                                 });
                             } else {
                                 log!("👥 First voter is {}, I am {}, waiting for snapshot", first_voter, my_username);

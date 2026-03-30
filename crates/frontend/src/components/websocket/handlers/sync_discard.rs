@@ -1,42 +1,30 @@
 use crate::components::websocket::WsSender;
-use gloo_net::websocket::Message;
 use gloo_timers::future::TimeoutFuture;
 use leptos::logging::log;
-use leptos::prelude::*;
 use leptos::task::spawn_local;
 use shared::events::{
-    ChatMessagePayload, ClientEvent, RoomState, SyncSnapshotRequestPayload, SyncVersionPayload,
-    VotingResultPayload,
+    ClientEvent, SyncSnapshotRequestPayload, SyncVersionPayload,
     voting::{VotingOption, VotingStartPayload, VotingType},
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+pub struct ConflictResolutionContext<'a> {
+    pub tx: &'a WsSender,
+    pub collected_announces: &'a Rc<RefCell<Vec<SyncVersionPayload>>>,
+    pub is_collecting_announces: &'a Rc<RefCell<bool>>,
+    pub expected_snapshot_from: &'a Rc<RefCell<Option<String>>>,
+}
+
 /// Запуск процесса разрешения конфликта через сбор анонсов
-#[allow(clippy::too_many_arguments)]
-pub fn start_conflict_resolution(
-    tx: &WsSender,
-    collected_announces: &Rc<RefCell<Vec<SyncVersionPayload>>>,
-    is_collecting_announces: &Rc<RefCell<bool>>,
-    local_version: &Rc<RefCell<u64>>,
-    last_synced_version: &Rc<RefCell<u64>>,
-    room_state: &Rc<RefCell<RoomState>>,
-    room_name: &str,
-    messages_signal: RwSignal<Vec<ChatMessagePayload>>,
-    voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
-    expected_snapshot_from: &Rc<RefCell<Option<String>>>,
-) {
+pub fn start_conflict_resolution(ctx: ConflictResolutionContext<'_>) {
     log!("🔄 Starting conflict resolution via announce collection...");
 
-    let tx_clone = tx.clone();
-    let collected_announces_clone = collected_announces.clone();
-    let is_collecting_announces_clone = is_collecting_announces.clone();
-    let local_version_clone = local_version.clone();
-    let last_synced_version_clone = last_synced_version.clone();
-    let room_state_clone = room_state.clone();
-    let room_name_str = room_name.to_string();
-    let expected_snapshot_from_clone = expected_snapshot_from.clone();
+    let tx_clone = ctx.tx.clone();
+    let collected_announces_clone = ctx.collected_announces.clone();
+    let is_collecting_announces_clone = ctx.is_collecting_announces.clone();
+    let expected_snapshot_from_clone = ctx.expected_snapshot_from.clone();
 
     spawn_local(async move {
         // Включаем режим сбора анонсов
@@ -47,8 +35,7 @@ pub fn start_conflict_resolution(
 
         // Отправляем SyncRequest - все отправят свои анонсы
         let sync_request = ClientEvent::SyncRequest;
-        if let Ok(json) = serde_json::to_string(&sync_request) {
-            let _ = tx_clone.clone().try_send(Message::Text(json));
+        if tx_clone.try_send_event(sync_request).is_ok() {
             log!("📤 Sent SyncRequest broadcast");
         }
 
@@ -63,12 +50,6 @@ pub fn start_conflict_resolution(
         // Анализируем собранные анонсы
         analyze_announces_and_resolve(
             &collected_announces_clone,
-            &local_version_clone,
-            &last_synced_version_clone,
-            &room_state_clone,
-            &room_name_str,
-            messages_signal,
-            voting_results,
             &tx_clone,
             &expected_snapshot_from_clone,
         );
@@ -111,15 +92,8 @@ pub fn handle_announce_for_conflict(
 }
 
 /// Анализ собранных анонсов и принятие решения
-#[allow(clippy::too_many_arguments)]
 fn analyze_announces_and_resolve(
     collected_announces: &Rc<RefCell<Vec<SyncVersionPayload>>>,
-    _local_version: &Rc<RefCell<u64>>,
-    _last_synced_version: &Rc<RefCell<u64>>,
-    _room_state: &Rc<RefCell<RoomState>>,
-    _room_name: &str,
-    _messages_signal: RwSignal<Vec<ChatMessagePayload>>,
-    _voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
     tx: &WsSender,
     expected_snapshot_from: &Rc<RefCell<Option<String>>>,
 ) {
@@ -155,7 +129,7 @@ fn analyze_announces_and_resolve(
     for announce in announces {
         hash_counts
             .entry(announce.state_hash.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(announce);
     }
 
@@ -255,8 +229,7 @@ fn request_snapshot_from_user(
         target_username: target_username.to_string(),
     });
 
-    if let Ok(json) = serde_json::to_string(&request) {
-        let _ = tx.clone().try_send(Message::Text(json));
+    if tx.try_send_event(request).is_ok() {
         log!("📤 Sent SyncSnapshotRequest to {}", target_username);
     }
 }
@@ -315,8 +288,7 @@ fn create_hash_selection_voting(
     };
 
     let event = ClientEvent::VotingStart(voting_payload);
-    if let Ok(json) = serde_json::to_string(&event) {
-        let _ = tx.clone().try_send(Message::Text(json));
+    if tx.try_send_event(event).is_ok() {
         log!("🗳️ Created hash selection voting");
     }
 }

@@ -1,6 +1,5 @@
-use super::{WsSender, storage};
+use super::{OutboundPriority, WsSender, storage};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use gloo_net::websocket::Message;
 use gloo_timers::future::TimeoutFuture;
 use js_sys::{Array, Uint8Array};
 use leptos::logging::log;
@@ -22,7 +21,6 @@ const MAX_FILE_SIZE_BYTES: u64 = 50 * 1024 * 1024;
 const CHUNK_SIZE_BYTES: usize = 48 * 1024;
 const OUTGOING_CONCURRENCY_LIMIT: usize = 3;
 const REQUEST_RETRY_DELAY_MS: u32 = 10_000;
-const CHUNK_DELAY_MS: u32 = 10;
 const SUPPORTED_MIME_TYPES: &[&str] = &[
     "image/png",
     "image/jpeg",
@@ -470,7 +468,7 @@ impl FileTransferState {
         ws_sender: Option<WsSender>,
         force: bool,
     ) {
-        let Some(mut sender) = ws_sender else {
+        let Some(sender) = ws_sender else {
             return;
         };
 
@@ -491,9 +489,7 @@ impl FileTransferState {
             file,
             from: username,
         });
-        if let Ok(json) = serde_json::to_string(&event) {
-            let _ = sender.try_send(Message::Text(json));
-        }
+        let _ = sender.try_send_event(event);
     }
 
     fn request_file_if_needed(&self, file: FileRef, username: String, ws_sender: Option<WsSender>) {
@@ -501,7 +497,7 @@ impl FileTransferState {
             .borrow_mut()
             .insert(file.hash.clone(), file.clone());
 
-        let Some(mut sender) = ws_sender else {
+        let Some(sender) = ws_sender else {
             return;
         };
 
@@ -531,9 +527,7 @@ impl FileTransferState {
             hash: file.hash.clone(),
             requester: username.clone(),
         });
-        if let Ok(json) = serde_json::to_string(&event) {
-            let _ = sender.try_send(Message::Text(json));
-        }
+        let _ = sender.try_send_event(event);
 
         let this = self.clone();
         spawn_local(async move {
@@ -632,7 +626,7 @@ impl FileTransferState {
         _username: String,
         ws_sender: Option<WsSender>,
     ) -> Result<(), String> {
-        let Some(mut sender) = ws_sender else {
+        let Some(sender) = ws_sender else {
             return Ok(());
         };
 
@@ -655,10 +649,7 @@ impl FileTransferState {
                 data: BASE64.encode(chunk),
             });
 
-            if let Ok(json) = serde_json::to_string(&event) {
-                let _ = sender.try_send(Message::Text(json));
-            }
-            TimeoutFuture::new(CHUNK_DELAY_MS).await;
+            let _ = sender.try_send_event_with_priority(event, OutboundPriority::Low);
         }
 
         Ok(())
@@ -723,7 +714,7 @@ impl FileTransferState {
     }
 
     fn send_abort(&self, hash: &str, requester: &str, ws_sender: Option<WsSender>, reason: &str) {
-        let Some(mut sender) = ws_sender else {
+        let Some(sender) = ws_sender else {
             return;
         };
 
@@ -732,9 +723,7 @@ impl FileTransferState {
             requester: requester.to_string(),
             reason: reason.to_string(),
         });
-        if let Ok(json) = serde_json::to_string(&event) {
-            let _ = sender.try_send(Message::Text(json));
-        }
+        let _ = sender.try_send_event(event);
     }
 
     fn set_status(&self, hash: &str, status: FileTransferStatus) {

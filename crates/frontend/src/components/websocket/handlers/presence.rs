@@ -1,7 +1,6 @@
 use crate::components::statistics::StateEvent;
 use crate::components::voting::VotingState;
 use crate::components::websocket::{WsSender, utils};
-use gloo_net::websocket::Message;
 use leptos::logging::log;
 use leptos::prelude::*;
 use shared::events::{
@@ -17,9 +16,7 @@ pub fn handle_presence_request(payload: PresenceRequestPayload, tx: &WsSender, m
         request_id: payload.request_id,
         user: my_username.to_string(),
     });
-    if let Ok(json) = serde_json::to_string(&response) {
-        let _ = tx.clone().try_send(Message::Text(json));
-    }
+    let _ = tx.try_send_event(response);
 }
 
 pub fn handle_presence_response(
@@ -33,10 +30,10 @@ pub fn handle_presence_response(
     // Извлекаем voting_id из request_id (формат: "voting_{voting_id}")
     if let Some(voting_id) = payload.request_id.strip_prefix("voting_") {
         votings.update(|map| {
-            if let Some(VotingState::Active { participants, .. }) = map.get_mut(voting_id) {
-                if !participants.contains(&payload.user) {
-                    participants.push(payload.user.clone());
-                }
+            if let Some(VotingState::Active { participants, .. }) = map.get_mut(voting_id)
+                && !participants.contains(&payload.user)
+            {
+                participants.push(payload.user.clone());
             }
         });
 

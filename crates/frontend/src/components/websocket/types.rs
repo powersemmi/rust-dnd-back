@@ -2,12 +2,15 @@ use leptos::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+type ConflictResolutionCallback = Rc<dyn Fn()>;
+type ConflictResolutionCallbackSlot = Rc<RefCell<Option<ConflictResolutionCallback>>>;
+
 // Обертка для callback-а, которую можно клонировать и передавать как Send/Sync
 #[derive(Clone, Default)]
 pub struct ConflictResolutionHandle {
     // Внутри храним Option<Rc<dyn Fn()>>
     // Rc<dyn Fn()> позволяет хранить замыкание, захватывающее переменные
-    inner: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+    inner: ConflictResolutionCallbackSlot,
 }
 
 // SAFETY: В WASM среда однопоточная, поэтому мы можем "обмануть" компилятор,

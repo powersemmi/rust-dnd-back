@@ -29,10 +29,10 @@ pub fn RoomSelector(
         }
 
         // Сохраняем в localStorage
-        if let Some(window) = web_sys::window() {
-            if let Ok(Some(storage)) = window.local_storage() {
-                let _ = storage.set_item("last_room_id", &room_val);
-            }
+        if let Some(window) = web_sys::window()
+            && let Ok(Some(storage)) = window.local_storage()
+        {
+            let _ = storage.set_item("last_room_id", &room_val);
         }
 
         on_room_selected.run(room_val);

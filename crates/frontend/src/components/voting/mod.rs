@@ -51,10 +51,10 @@ pub fn VotingWindow(
         });
         // Если голосование завершено (в состоянии Results), удаляем его из votings
         votings.update(|map| {
-            if let Some(state) = map.get(&voting_id) {
-                if matches!(state, VotingState::Results { .. }) {
-                    map.remove(&voting_id);
-                }
+            if let Some(state) = map.get(&voting_id)
+                && matches!(state, VotingState::Results { .. })
+            {
+                map.remove(&voting_id);
             }
         });
         // Переключаемся на список
@@ -144,20 +144,16 @@ pub fn VotingWindow(
                         };
 
                         // Отправляем результат
-                        if let Some(mut sender) = ws_sender.get() {
-                            let event = ClientEvent::VotingResult(result_payload);
-                            if let Ok(json) = serde_json::to_string(&event) {
-                                let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
-                            }
+                        if let Some(sender) = ws_sender.get() {
+                            let _ =
+                                sender.try_send_event(ClientEvent::VotingResult(result_payload));
 
                             // Отправляем событие завершения
                             let end_event =
                                 ClientEvent::VotingEnd(shared::events::VotingEndPayload {
                                     voting_id: voting_id.clone(),
                                 });
-                            if let Ok(json) = serde_json::to_string(&end_event) {
-                                let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
-                            }
+                            let _ = sender.try_send_event(end_event);
                         }
                     }
                 }

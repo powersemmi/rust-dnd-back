@@ -6,7 +6,7 @@ mod sync;
 mod types;
 mod utils;
 
-pub use connection::{WsSender, connect_websocket};
+pub use connection::{ConnectWebSocketArgs, OutboundPriority, WsSender, connect_websocket};
 pub use file_transfer::{FileTransferStage, FileTransferState};
 pub(crate) use storage::{delete_state, move_state};
 pub use types::{ConflictResolutionHandle, ConflictType, CursorSignals, SyncConflict};

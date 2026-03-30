@@ -45,9 +45,7 @@ impl VotingManager {
         self.presence_requests.borrow_mut().insert(request_id.clone(), HashSet::new());
 
         let event = ClientEvent::PresenceRequest(presence_req);
-        if let Ok(json) = serde_json::to_string(&event) {
-            let _ = tx.clone().try_send(gloo_net::websocket::Message::Text(json));
-        }
+        let _ = tx.try_send_event(event);
 
         // Также отвечаем сами
         let response = PresenceResponsePayload {
@@ -55,9 +53,7 @@ impl VotingManager {
             user: my_username.to_string(),
         };
         let event = ClientEvent::PresenceResponse(response);
-        if let Ok(json) = serde_json::to_string(&event) {
-            let _ = tx.clone().try_send(gloo_net::websocket::Message::Text(json));
-        }
+        let _ = tx.try_send_event(event);
 
         voting_state.set(Some(VotingState::Active(payload)));
     }
@@ -76,9 +72,7 @@ impl VotingManager {
         };
 
         let event = ClientEvent::PresenceResponse(response);
-        if let Ok(json) = serde_json::to_string(&event) {
-            let _ = tx.clone().try_send(gloo_net::websocket::Message::Text(json));
-        }
+        let _ = tx.try_send_event(event);
     }
 
     pub fn handle_presence_response(
@@ -164,9 +158,7 @@ impl VotingManager {
             };
 
             let event = ClientEvent::VotingCast(cast_payload);
-            if let Ok(json) = serde_json::to_string(&event) {
-                let _ = tx.clone().try_send(gloo_net::websocket::Message::Text(json));
-            }
+            let _ = tx.try_send_event(event);
         }
     }
 }

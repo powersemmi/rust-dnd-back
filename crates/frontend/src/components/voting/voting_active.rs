@@ -52,11 +52,9 @@ pub fn VotingActive(
 
         log!("Sending VotingCast payload: {:?}", payload);
 
-        if let Some(mut sender) = ws_sender.get() {
-            if let Ok(json) = serde_json::to_string(&ClientEvent::VotingCast(payload)) {
-                log!("Sending VotingCast JSON: {}", json);
-                let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
-            }
+        if let Some(sender) = ws_sender.get() {
+            log!("Sending VotingCast event");
+            let _ = sender.try_send_event(ClientEvent::VotingCast(payload));
         } else {
             log!("WebSocket sender not available!");
         }
@@ -105,10 +103,8 @@ pub fn VotingActive(
                                                 selected_option_ids: vec![default_id],
                                             };
 
-                                            if let Some(mut sender) = ws_sender.get() {
-                                                if let Ok(json) = serde_json::to_string(&ClientEvent::VotingCast(payload)) {
-                                                    let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
-                                                }
+                                            if let Some(sender) = ws_sender.get() {
+                                                let _ = sender.try_send_event(ClientEvent::VotingCast(payload));
                                             }
 
                                             voted_in.update(|set| {
@@ -151,7 +147,7 @@ pub fn VotingActive(
                                                 </div>
                                             }.into_any()
                                         } else {
-                                            view! {}.into_any()
+                                            ().into_any()
                                         }
                                     }}
 
@@ -365,10 +361,10 @@ pub fn VotingActive(
                                                                 </div>
                                                             }.into_any()
                                                         } else {
-                                                            view! {}.into_any()
+                                                            ().into_any()
                                                         }
                                                     } else {
-                                                        view! {}.into_any()
+                                                        ().into_any()
                                                     }
                                                 }}
                                             </div>

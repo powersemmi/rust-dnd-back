@@ -16,196 +16,106 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-#[allow(clippy::too_many_arguments)]
-pub fn handle_event(
-    event: ClientEvent,
-    tx: &WsSender,
-    file_transfer: &FileTransferState,
-    room_state: &Rc<RefCell<RoomState>>,
-    local_version: &Rc<RefCell<u64>>,
-    last_synced_version: &Rc<RefCell<u64>>,
-    sync_candidates: &Rc<RefCell<Vec<(String, u64)>>>,
-    my_username: &str,
-    room_name: &str,
-    set_cursors: WriteSignal<HashMap<String, CursorSignals>>,
-    messages_signal: RwSignal<Vec<ChatMessagePayload>>,
-    state_events: RwSignal<Vec<StateEvent>>,
-    scenes_signal: RwSignal<Vec<Scene>>,
-    active_scene_id_signal: RwSignal<Option<String>>,
-    conflict_signal: RwSignal<Option<SyncConflict>>,
-    votings: RwSignal<HashMap<String, VotingState>>,
-    voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
-    has_statistics_notification: RwSignal<bool>,
-    notification_count: RwSignal<u32>,
-    has_chat_notification: RwSignal<bool>,
-    chat_notification_count: RwSignal<u32>,
-    expected_snapshot_from: &Rc<RefCell<Option<String>>>,
-    collected_snapshots: &Rc<RefCell<Vec<(String, RoomState)>>>,
-    is_collecting_snapshots: &Rc<RefCell<bool>>,
-    collected_announces: &Rc<RefCell<Vec<shared::events::SyncVersionPayload>>>,
-    is_collecting_announces: &Rc<RefCell<bool>>,
-) {
+pub struct HandlerContext<'a> {
+    pub tx: &'a WsSender,
+    pub file_transfer: &'a FileTransferState,
+    pub room_state: &'a Rc<RefCell<RoomState>>,
+    pub local_version: &'a Rc<RefCell<u64>>,
+    pub last_synced_version: &'a Rc<RefCell<u64>>,
+    pub sync_candidates: &'a Rc<RefCell<Vec<(String, u64)>>>,
+    pub my_username: &'a str,
+    pub room_name: &'a str,
+    pub set_cursors: WriteSignal<HashMap<String, CursorSignals>>,
+    pub messages_signal: RwSignal<Vec<ChatMessagePayload>>,
+    pub state_events: RwSignal<Vec<StateEvent>>,
+    pub scenes_signal: RwSignal<Vec<Scene>>,
+    pub active_scene_id_signal: RwSignal<Option<String>>,
+    pub conflict_signal: RwSignal<Option<SyncConflict>>,
+    pub votings: RwSignal<HashMap<String, VotingState>>,
+    pub voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
+    pub has_statistics_notification: RwSignal<bool>,
+    pub notification_count: RwSignal<u32>,
+    pub has_chat_notification: RwSignal<bool>,
+    pub chat_notification_count: RwSignal<u32>,
+    pub expected_snapshot_from: &'a Rc<RefCell<Option<String>>>,
+    pub collected_snapshots: &'a Rc<RefCell<Vec<(String, RoomState)>>>,
+    pub is_collecting_snapshots: &'a Rc<RefCell<bool>>,
+    pub collected_announces: &'a Rc<RefCell<Vec<shared::events::SyncVersionPayload>>>,
+    pub is_collecting_announces: &'a Rc<RefCell<bool>>,
+}
+
+pub fn handle_event(event: ClientEvent, ctx: &HandlerContext<'_>) {
     match event {
-        ClientEvent::ChatMessage(msg) => chat::handle_chat_message(
-            msg,
-            room_state,
-            local_version,
-            last_synced_version,
-            my_username,
-            room_name,
-            messages_signal,
-            state_events,
-            has_chat_notification,
-            chat_notification_count,
-        ),
+        ClientEvent::ChatMessage(msg) => chat::handle_chat_message(msg, ctx),
         ClientEvent::FileAnnounce(payload) => {
-            file::handle_file_announce(payload, file_transfer, my_username, tx)
+            file::handle_file_announce(payload, ctx.file_transfer, ctx.my_username, ctx.tx)
         }
-        ClientEvent::FileRequest(payload) => {
-            file::handle_file_request(payload, file_transfer, room_name, my_username, tx)
-        }
-        ClientEvent::FileChunk(payload) => {
-            file::handle_file_chunk(payload, file_transfer, room_name, my_username, tx)
-        }
+        ClientEvent::FileRequest(payload) => file::handle_file_request(
+            payload,
+            ctx.file_transfer,
+            ctx.room_name,
+            ctx.my_username,
+            ctx.tx,
+        ),
+        ClientEvent::FileChunk(payload) => file::handle_file_chunk(
+            payload,
+            ctx.file_transfer,
+            ctx.room_name,
+            ctx.my_username,
+            ctx.tx,
+        ),
         ClientEvent::FileAbort(payload) => {
-            file::handle_file_abort(payload, file_transfer, my_username)
+            file::handle_file_abort(payload, ctx.file_transfer, ctx.my_username)
         }
-        ClientEvent::SceneCreate(payload) => scene::handle_scene_create(
-            payload,
-            room_state,
-            local_version,
-            last_synced_version,
-            my_username,
-            room_name,
-            scenes_signal,
-            active_scene_id_signal,
-            state_events,
-        ),
-        ClientEvent::SceneUpdate(payload) => scene::handle_scene_update(
-            payload,
-            room_state,
-            local_version,
-            last_synced_version,
-            my_username,
-            room_name,
-            scenes_signal,
-            active_scene_id_signal,
-            state_events,
-        ),
-        ClientEvent::SceneDelete(payload) => scene::handle_scene_delete(
-            payload,
-            room_state,
-            local_version,
-            last_synced_version,
-            my_username,
-            room_name,
-            scenes_signal,
-            active_scene_id_signal,
-            state_events,
-        ),
-        ClientEvent::SceneActivate(payload) => scene::handle_scene_activate(
-            payload,
-            room_state,
-            local_version,
-            last_synced_version,
-            my_username,
-            room_name,
-            scenes_signal,
-            active_scene_id_signal,
-            state_events,
-        ),
+        ClientEvent::SceneCreate(payload) => scene::handle_scene_create(payload, ctx),
+        ClientEvent::SceneUpdate(payload) => scene::handle_scene_update(payload, ctx),
+        ClientEvent::SceneDelete(payload) => scene::handle_scene_delete(payload, ctx),
+        ClientEvent::SceneActivate(payload) => scene::handle_scene_activate(payload, ctx),
         ClientEvent::MouseClickPayload(mouse_event) => {
-            mouse::handle_mouse_event(mouse_event, my_username, set_cursors)
+            mouse::handle_mouse_event(mouse_event, ctx.my_username, ctx.set_cursors)
         }
         ClientEvent::SyncRequest => {
-            sync::handle_sync_request(tx, room_state, local_version, my_username);
-            file_transfer.reannounce_scene_files(
-                room_name.to_string(),
-                my_username.to_string(),
-                Some(tx.clone()),
-                &room_state.borrow(),
+            sync::handle_sync_request(ctx.tx, ctx.room_state, ctx.local_version, ctx.my_username);
+            ctx.file_transfer.reannounce_scene_files(
+                ctx.room_name.to_string(),
+                ctx.my_username.to_string(),
+                Some(ctx.tx.clone()),
+                &ctx.room_state.borrow(),
             );
         }
-        ClientEvent::SyncVersionAnnounce(payload) => sync::handle_sync_announce(
-            payload,
-            sync_candidates,
-            room_state,
-            local_version,
-            state_events,
-            conflict_signal,
-            collected_announces,
-            is_collecting_announces,
-        ),
+        ClientEvent::SyncVersionAnnounce(payload) => sync::handle_sync_announce(payload, ctx),
         ClientEvent::SyncSnapshotRequest(payload) => sync::handle_snapshot_request(
             payload,
-            tx,
-            room_state,
-            local_version,
-            my_username,
-            state_events,
+            ctx.tx,
+            ctx.room_state,
+            ctx.local_version,
+            ctx.my_username,
+            ctx.state_events,
         ),
-        ClientEvent::SyncSnapshot(payload) => sync::handle_snapshot(
-            payload,
-            room_state,
-            local_version,
-            last_synced_version,
-            room_name,
-            messages_signal,
-            state_events,
-            scenes_signal,
-            active_scene_id_signal,
-            conflict_signal,
-            voting_results,
-            expected_snapshot_from,
-            tx,
-            collected_snapshots,
-            is_collecting_snapshots,
-            my_username,
-        ),
-        ClientEvent::VotingStart(payload) => voting::handle_voting_start(
-            payload,
-            votings,
-            tx,
-            my_username,
-            local_version,
-            state_events,
-            has_statistics_notification,
-            notification_count,
-        ),
+        ClientEvent::SyncSnapshot(payload) => sync::handle_snapshot(payload, ctx),
+        ClientEvent::VotingStart(payload) => voting::handle_voting_start(payload, ctx),
         ClientEvent::VotingCast(payload) => {
-            voting::handle_voting_cast(payload, votings, local_version, state_events)
+            voting::handle_voting_cast(payload, ctx.votings, ctx.local_version, ctx.state_events)
         }
-        ClientEvent::VotingResult(payload) => voting::handle_voting_result(
-            payload,
-            votings,
-            voting_results,
-            room_state,
-            local_version,
-            last_synced_version,
-            room_name,
-            state_events,
-            tx,
-            my_username,
-            expected_snapshot_from,
-            collected_snapshots,
-            is_collecting_snapshots,
-            messages_signal,
-            scenes_signal,
-            active_scene_id_signal,
-            conflict_signal,
-        ),
+        ClientEvent::VotingResult(payload) => voting::handle_voting_result(payload, ctx),
         ClientEvent::VotingEnd(payload) => {
-            voting::handle_voting_end(payload, votings, local_version, state_events)
+            voting::handle_voting_end(payload, ctx.votings, ctx.local_version, ctx.state_events)
         }
         ClientEvent::PresenceRequest(payload) => {
-            presence::handle_presence_request(payload, tx, my_username)
+            presence::handle_presence_request(payload, ctx.tx, ctx.my_username)
         }
-        ClientEvent::PresenceResponse(payload) => {
-            presence::handle_presence_response(payload, votings, local_version, state_events)
-        }
-        ClientEvent::PresenceAnnounce(payload) => {
-            presence::handle_presence_announce(payload, votings, local_version, state_events)
-        }
+        ClientEvent::PresenceResponse(payload) => presence::handle_presence_response(
+            payload,
+            ctx.votings,
+            ctx.local_version,
+            ctx.state_events,
+        ),
+        ClientEvent::PresenceAnnounce(payload) => presence::handle_presence_announce(
+            payload,
+            ctx.votings,
+            ctx.local_version,
+            ctx.state_events,
+        ),
         _ => {}
     }
 }

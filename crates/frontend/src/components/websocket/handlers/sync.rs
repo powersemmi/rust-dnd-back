@@ -1,15 +1,14 @@
 use crate::components::statistics::StateEvent;
 use crate::components::websocket::{WsSender, storage, sync::SyncValidator, types::*, utils};
-use gloo_net::websocket::Message;
 use leptos::logging::log;
 use leptos::prelude::*;
 use shared::events::{
-    ChatMessagePayload, ClientEvent, RoomState, Scene, SyncSnapshotPayload,
-    SyncSnapshotRequestPayload, SyncVersionPayload, VotingResultPayload,
+    ClientEvent, RoomState, SyncSnapshotPayload, SyncSnapshotRequestPayload, SyncVersionPayload,
 };
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
+
+use super::HandlerContext;
 
 pub fn handle_sync_request(
     tx: &WsSender,
@@ -34,30 +33,19 @@ pub fn handle_sync_request(
         state_hash,
         recent_hashes,
     });
-    if let Ok(json) = serde_json::to_string(&announce) {
-        let _ = tx.clone().try_send(Message::Text(json));
-    }
+    let _ = tx.try_send_event(announce);
 }
 
-pub fn handle_sync_announce(
-    payload: SyncVersionPayload,
-    sync_candidates: &Rc<RefCell<Vec<(String, u64)>>>,
-    room_state: &Rc<RefCell<RoomState>>,
-    local_version: &Rc<RefCell<u64>>,
-    state_events: RwSignal<Vec<StateEvent>>,
-    conflict_signal: RwSignal<Option<SyncConflict>>,
-    collected_announces: &Rc<RefCell<Vec<SyncVersionPayload>>>,
-    is_collecting_announces: &Rc<RefCell<bool>>,
-) {
+pub fn handle_sync_announce(payload: SyncVersionPayload, ctx: &HandlerContext<'_>) {
     // Если мы в режиме сбора анонсов для конфликт-резолюции, собираем и возвращаем
-    if *is_collecting_announces.borrow() {
+    if *ctx.is_collecting_announces.borrow() {
         use super::sync_discard;
-        sync_discard::handle_announce_for_conflict(payload, collected_announces);
+        sync_discard::handle_announce_for_conflict(payload, ctx.collected_announces);
         return;
     }
 
-    let my_ver = *local_version.borrow();
-    let state = room_state.borrow();
+    let my_ver = *ctx.local_version.borrow();
+    let state = ctx.room_state.borrow();
     let my_hash = state.current_hash.clone();
 
     // Специальная обработка для новичков (версия 0 или пустой хеш)
@@ -84,12 +72,12 @@ pub fn handle_sync_announce(
         );
 
         // Добавляем в кандидаты для синхронизации
-        sync_candidates
+        ctx.sync_candidates
             .borrow_mut()
             .push((payload.username.clone(), payload.version));
 
         utils::log_event(
-            state_events,
+            ctx.state_events,
             my_ver,
             "SYNC_VERSION_ANNOUNCE",
             &format!(
@@ -106,9 +94,9 @@ pub fn handle_sync_announce(
         log!("Identical states with {}: same hash", payload.username);
 
         // Если у нас был конфликт, но теперь состояния идентичны - очищаем конфликт
-        if conflict_signal.get().is_some() {
+        if ctx.conflict_signal.get().is_some() {
             log!("✅ Conflict resolved - states are now identical");
-            conflict_signal.set(None);
+            ctx.conflict_signal.set(None);
         }
 
         "IDENTICAL"
@@ -134,8 +122,8 @@ pub fn handle_sync_announce(
             );
 
             // Устанавливаем конфликт ТОЛЬКО если не в режиме сбора анонсов
-            if !*is_collecting_announces.borrow() {
-                conflict_signal.set(Some(SyncConflict {
+            if !*ctx.is_collecting_announces.borrow() {
+                ctx.conflict_signal.set(Some(SyncConflict {
                     conflict_type: ConflictType::Fork,
                     local_version: my_ver,
                     remote_version: payload.version,
@@ -165,8 +153,8 @@ pub fn handle_sync_announce(
 
         // Устанавливаем конфликт ТОЛЬКО если не в режиме сбора анонсов
         // (иначе получается бесконечный цикл открытия окон конфликта)
-        if !*is_collecting_announces.borrow() {
-            conflict_signal.set(Some(SyncConflict {
+        if !*ctx.is_collecting_announces.borrow() {
+            ctx.conflict_signal.set(Some(SyncConflict {
                 conflict_type: ConflictType::SplitBrain,
                 local_version: my_ver,
                 remote_version: payload.version,
@@ -182,7 +170,7 @@ pub fn handle_sync_announce(
 
     // Добавляем в кандидаты только если это не форк и не split brain
     if lineage_status != "FORK" && lineage_status != "SPLIT_BRAIN" {
-        sync_candidates
+        ctx.sync_candidates
             .borrow_mut()
             .push((payload.username.clone(), payload.version));
     }
@@ -193,7 +181,7 @@ pub fn handle_sync_announce(
         &payload.state_hash[..8.min(payload.state_hash.len())]
     };
     utils::log_event(
-        state_events,
+        ctx.state_events,
         my_ver,
         "SYNC_VERSION_ANNOUNCE",
         &format!(
@@ -222,9 +210,7 @@ pub fn handle_snapshot_request(
             version: state.version,
             state: state.clone(),
         });
-        if let Ok(json) = serde_json::to_string(&snapshot) {
-            let _ = tx.clone().try_send(Message::Text(json));
-        }
+        let _ = tx.try_send_event(snapshot);
 
         utils::log_event(
             state_events,
@@ -235,27 +221,9 @@ pub fn handle_snapshot_request(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn handle_snapshot(
-    payload: SyncSnapshotPayload,
-    room_state: &Rc<RefCell<RoomState>>,
-    local_version: &Rc<RefCell<u64>>,
-    last_synced_version: &Rc<RefCell<u64>>,
-    room_name: &str,
-    messages_signal: RwSignal<Vec<ChatMessagePayload>>,
-    state_events: RwSignal<Vec<StateEvent>>,
-    scenes_signal: RwSignal<Vec<Scene>>,
-    active_scene_id_signal: RwSignal<Option<String>>,
-    conflict_signal: RwSignal<Option<SyncConflict>>,
-    voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
-    expected_snapshot_from: &Rc<RefCell<Option<String>>>,
-    tx: &WsSender,
-    collected_snapshots: &Rc<RefCell<Vec<(String, RoomState)>>>,
-    is_collecting_snapshots: &Rc<RefCell<bool>>,
-    my_username: &str,
-) {
+pub fn handle_snapshot(payload: SyncSnapshotPayload, ctx: &HandlerContext<'_>) {
     // Проверяем, находимся ли мы в режиме сбора snapshots
-    if *is_collecting_snapshots.borrow() {
+    if *ctx.is_collecting_snapshots.borrow() {
         log!(
             "📦 Collecting snapshot for analysis (v{}, hash: {}...)",
             payload.state.version,
@@ -263,21 +231,21 @@ pub fn handle_snapshot(
         );
 
         // Добавляем snapshot в коллекцию
-        collected_snapshots
+        ctx.collected_snapshots
             .borrow_mut()
-            .push((my_username.to_string(), payload.state.clone()));
+            .push((ctx.my_username.to_string(), payload.state.clone()));
 
         log!(
             "📊 Total collected snapshots: {}",
-            collected_snapshots.borrow().len()
+            ctx.collected_snapshots.borrow().len()
         );
         return; // Не применяем snapshot, только собираем
     }
 
-    let local_state = room_state.borrow();
+    let local_state = ctx.room_state.borrow();
     let local_ver = local_state.version;
     let local_hash = local_state.current_hash.clone();
-    let local_synced = *last_synced_version.borrow();
+    let local_synced = *ctx.last_synced_version.borrow();
     drop(local_state);
 
     let remote_ver = payload.state.version;
@@ -292,30 +260,31 @@ pub fn handle_snapshot(
     );
 
     // Проверяем, ожидаем ли мы снапшот после конфликт-резолвинга
-    let is_conflict_resolution_snapshot = expected_snapshot_from.borrow().is_some();
+    let is_conflict_resolution_snapshot = ctx.expected_snapshot_from.borrow().is_some();
 
     if is_conflict_resolution_snapshot {
         log!("🔄 This is a conflict resolution snapshot, applying without strict validation");
 
         // Применяем снапшот
-        *local_version.borrow_mut() = remote_ver;
-        *last_synced_version.borrow_mut() = remote_ver;
-        *room_state.borrow_mut() = payload.state.clone();
+        *ctx.local_version.borrow_mut() = remote_ver;
+        *ctx.last_synced_version.borrow_mut() = remote_ver;
+        *ctx.room_state.borrow_mut() = payload.state.clone();
 
-        messages_signal.set(payload.state.chat_history.clone());
-        voting_results.set(payload.state.voting_results.clone());
-        scenes_signal.set(payload.state.scenes.clone());
-        active_scene_id_signal.set(payload.state.active_scene_id.clone());
-        storage::save_state_in_background(room_name, &payload.state);
+        ctx.messages_signal.set(payload.state.chat_history.clone());
+        ctx.voting_results.set(payload.state.voting_results.clone());
+        ctx.scenes_signal.set(payload.state.scenes.clone());
+        ctx.active_scene_id_signal
+            .set(payload.state.active_scene_id.clone());
+        storage::save_state_in_background(ctx.room_name, &payload.state);
 
         // Очищаем ожидание и закрываем окно конфликта
-        *expected_snapshot_from.borrow_mut() = None;
-        conflict_signal.set(None);
+        *ctx.expected_snapshot_from.borrow_mut() = None;
+        ctx.conflict_signal.set(None);
 
         log!("✅ Conflict resolution snapshot applied: v{}", remote_ver);
 
         utils::log_event(
-            state_events,
+            ctx.state_events,
             remote_ver,
             "CONFLICT_RESOLVED",
             &format!("Applied conflict resolution snapshot v{}", remote_ver),
@@ -330,20 +299,21 @@ pub fn handle_snapshot(
             remote_ver
         );
 
-        *local_version.borrow_mut() = remote_ver;
-        *last_synced_version.borrow_mut() = remote_ver;
-        *room_state.borrow_mut() = payload.state.clone();
+        *ctx.local_version.borrow_mut() = remote_ver;
+        *ctx.last_synced_version.borrow_mut() = remote_ver;
+        *ctx.room_state.borrow_mut() = payload.state.clone();
 
-        messages_signal.set(payload.state.chat_history.clone());
-        voting_results.set(payload.state.voting_results.clone());
-        scenes_signal.set(payload.state.scenes.clone());
-        active_scene_id_signal.set(payload.state.active_scene_id.clone());
-        storage::save_state_in_background(room_name, &payload.state);
+        ctx.messages_signal.set(payload.state.chat_history.clone());
+        ctx.voting_results.set(payload.state.voting_results.clone());
+        ctx.scenes_signal.set(payload.state.scenes.clone());
+        ctx.active_scene_id_signal
+            .set(payload.state.active_scene_id.clone());
+        storage::save_state_in_background(ctx.room_name, &payload.state);
 
-        conflict_signal.set(None);
+        ctx.conflict_signal.set(None);
 
         utils::log_event(
-            state_events,
+            ctx.state_events,
             remote_ver,
             "DISCARD_SNAPSHOT_RECEIVED",
             &format!("Applied snapshot v{} after discard", remote_ver),
@@ -356,8 +326,7 @@ pub fn handle_snapshot(
             state_hash: payload.state.current_hash.clone(),
             recent_hashes: vec![],
         });
-        if let Ok(json) = serde_json::to_string(&announce) {
-            let _ = tx.clone().try_send(Message::Text(json));
+        if ctx.tx.try_send_event(announce).is_ok() {
             log!("📢 Sent SyncVersionAnnounce after discard");
         }
 
@@ -374,9 +343,9 @@ pub fn handle_snapshot(
         &payload.state,
     ) {
         Err(conflict) => {
-            conflict_signal.set(Some(conflict.clone()));
+            ctx.conflict_signal.set(Some(conflict.clone()));
             utils::log_event(
-                state_events,
+                ctx.state_events,
                 local_ver,
                 "SYNC_CONFLICT",
                 &format!(
@@ -389,21 +358,22 @@ pub fn handle_snapshot(
             // Валидация пройдена, применяем стейт
             log!("Applying snapshot v{}", remote_ver);
 
-            *local_version.borrow_mut() = remote_ver;
-            *last_synced_version.borrow_mut() = remote_ver;
-            *room_state.borrow_mut() = payload.state.clone();
+            *ctx.local_version.borrow_mut() = remote_ver;
+            *ctx.last_synced_version.borrow_mut() = remote_ver;
+            *ctx.room_state.borrow_mut() = payload.state.clone();
 
-            messages_signal.set(payload.state.chat_history.clone());
-            voting_results.set(payload.state.voting_results.clone());
-            scenes_signal.set(payload.state.scenes.clone());
-            active_scene_id_signal.set(payload.state.active_scene_id.clone());
-            storage::save_state_in_background(room_name, &payload.state);
+            ctx.messages_signal.set(payload.state.chat_history.clone());
+            ctx.voting_results.set(payload.state.voting_results.clone());
+            ctx.scenes_signal.set(payload.state.scenes.clone());
+            ctx.active_scene_id_signal
+                .set(payload.state.active_scene_id.clone());
+            storage::save_state_in_background(ctx.room_name, &payload.state);
 
             // Очищаем конфликт при успешной синхронизации
-            conflict_signal.set(None);
+            ctx.conflict_signal.set(None);
 
             utils::log_event(
-                state_events,
+                ctx.state_events,
                 remote_ver,
                 "SYNC_SNAPSHOT_RECEIVED",
                 &format!(

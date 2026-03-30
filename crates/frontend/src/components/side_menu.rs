@@ -66,7 +66,7 @@ pub fn SideMenu(
                         }
                         style=move || {
                             let bg = if has_chat_notification.get() {
-                                &theme.ui_notification
+                                theme.ui_notification
                             } else {
                                 button_bg
                             };
@@ -109,7 +109,7 @@ pub fn SideMenu(
                                 </span>
                             }.into_any()
                         } else {
-                            view! {}.into_any()
+                            ().into_any()
                         }}
                     </button>
 
@@ -139,7 +139,7 @@ pub fn SideMenu(
                                 </span>
                             }.into_any()
                         } else {
-                            view! {}.into_any()
+                            ().into_any()
                         }}
                     </button>
 
@@ -188,7 +188,7 @@ pub fn SideMenu(
                                 </span>
                             }.into_any()
                         } else {
-                            view! {}.into_any()
+                            ().into_any()
                         }}
                     </button>
 
@@ -218,7 +218,7 @@ pub fn SideMenu(
                                 </span>
                             }.into_any()
                         } else {
-                            view! {}.into_any()
+                            ().into_any()
                         }}
                     </button>
 
@@ -248,7 +248,7 @@ pub fn SideMenu(
                                 </span>
                             }.into_any()
                         } else {
-                            view! {}.into_any()
+                            ().into_any()
                         }}
                     </button>
                 </div>

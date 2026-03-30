@@ -1,29 +1,12 @@
-use crate::components::websocket::{WsSender, storage, types::SyncConflict};
-use gloo_net::websocket::Message;
+use crate::components::websocket::storage;
 use leptos::logging::log;
 use leptos::prelude::*;
-use shared::events::{
-    ChatMessagePayload, ClientEvent, RoomState, Scene, SyncVersionPayload, VotingResultPayload,
-};
-use std::cell::RefCell;
+use shared::events::{ClientEvent, RoomState, SyncVersionPayload, VotingResultPayload};
 use std::collections::HashMap;
-use std::rc::Rc;
 
-#[allow(clippy::too_many_arguments)]
-pub fn handle_hash_selection_voting_result(
-    payload: VotingResultPayload,
-    collected_snapshots: &Rc<RefCell<Vec<(String, RoomState)>>>,
-    local_version: &Rc<RefCell<u64>>,
-    last_synced_version: &Rc<RefCell<u64>>,
-    room_state: &Rc<RefCell<RoomState>>,
-    room_name: &str,
-    messages_signal: RwSignal<Vec<ChatMessagePayload>>,
-    scenes_signal: RwSignal<Vec<Scene>>,
-    active_scene_id_signal: RwSignal<Option<String>>,
-    voting_results: RwSignal<HashMap<String, VotingResultPayload>>,
-    conflict_signal: RwSignal<Option<SyncConflict>>,
-    tx: &WsSender,
-) {
+use super::super::HandlerContext;
+
+pub fn handle_hash_selection_voting_result(payload: VotingResultPayload, ctx: &HandlerContext<'_>) {
     log!("🔍 This is a hash selection voting: {}", payload.voting_id);
 
     // Находим вариант с максимальным количеством голосов
@@ -35,7 +18,7 @@ pub fn handle_hash_selection_voting_result(
         );
 
         // Извлекаем hash из stored snapshots по индексу
-        let collected_snapshots_clone = collected_snapshots.clone();
+        let collected_snapshots_clone = ctx.collected_snapshots.clone();
         let snapshots = collected_snapshots_clone.borrow().clone();
 
         if !snapshots.is_empty() {
@@ -44,51 +27,49 @@ pub fn handle_hash_selection_voting_result(
             for (_username, state) in &snapshots {
                 hash_counts
                     .entry(state.current_hash.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(state.clone());
             }
 
             // Извлекаем индекс из option_id (формат: "hash_N")
-            if let Some(idx_str) = winner.option_id.strip_prefix("hash_") {
-                if let Ok(idx) = idx_str.parse::<usize>() {
-                    // Получаем выбранный hash по индексу
-                    if let Some((chosen_hash, chosen_states)) = hash_counts.iter().nth(idx) {
-                        let chosen_state = &chosen_states[0];
+            if let Some(idx_str) = winner.option_id.strip_prefix("hash_")
+                && let Ok(idx) = idx_str.parse::<usize>()
+                && let Some((chosen_hash, chosen_states)) = hash_counts.iter().nth(idx)
+            {
+                let chosen_state = &chosen_states[0];
 
-                        log!(
-                            "✅ Applying chosen snapshot: v{} with hash {}...",
-                            chosen_state.version,
-                            &chosen_hash[..8]
-                        );
+                log!(
+                    "✅ Applying chosen snapshot: v{} with hash {}...",
+                    chosen_state.version,
+                    &chosen_hash[..8]
+                );
 
-                        *local_version.borrow_mut() = chosen_state.version;
-                        *last_synced_version.borrow_mut() = chosen_state.version;
-                        *room_state.borrow_mut() = chosen_state.clone();
+                *ctx.local_version.borrow_mut() = chosen_state.version;
+                *ctx.last_synced_version.borrow_mut() = chosen_state.version;
+                *ctx.room_state.borrow_mut() = chosen_state.clone();
 
-                        messages_signal.set(chosen_state.chat_history.clone());
-                        scenes_signal.set(chosen_state.scenes.clone());
-                        active_scene_id_signal.set(chosen_state.active_scene_id.clone());
-                        voting_results.set(chosen_state.voting_results.clone());
-                        storage::save_state_in_background(room_name, chosen_state);
+                ctx.messages_signal.set(chosen_state.chat_history.clone());
+                ctx.scenes_signal.set(chosen_state.scenes.clone());
+                ctx.active_scene_id_signal
+                    .set(chosen_state.active_scene_id.clone());
+                ctx.voting_results.set(chosen_state.voting_results.clone());
+                storage::save_state_in_background(ctx.room_name, chosen_state);
 
-                        conflict_signal.set(None);
+                ctx.conflict_signal.set(None);
 
-                        // Отправляем SyncVersionAnnounce
-                        let announce = ClientEvent::SyncVersionAnnounce(SyncVersionPayload {
-                            username: String::new(),
-                            version: chosen_state.version,
-                            state_hash: chosen_hash.clone(),
-                            recent_hashes: vec![],
-                        });
-                        if let Ok(json) = serde_json::to_string(&announce) {
-                            let _ = tx.clone().try_send(Message::Text(json));
-                            log!("📢 Sent SyncVersionAnnounce after hash selection");
-                        }
-
-                        // Очищаем collected snapshots
-                        collected_snapshots.borrow_mut().clear();
-                    }
+                // Отправляем SyncVersionAnnounce
+                let announce = ClientEvent::SyncVersionAnnounce(SyncVersionPayload {
+                    username: String::new(),
+                    version: chosen_state.version,
+                    state_hash: chosen_hash.clone(),
+                    recent_hashes: vec![],
+                });
+                if ctx.tx.try_send_event(announce).is_ok() {
+                    log!("📢 Sent SyncVersionAnnounce after hash selection");
                 }
+
+                // Очищаем collected snapshots
+                ctx.collected_snapshots.borrow_mut().clear();
             }
         }
     }

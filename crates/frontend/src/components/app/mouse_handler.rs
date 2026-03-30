@@ -58,7 +58,7 @@ pub fn send_mouse_event_throttled(
     });
 
     thread_local! {
-        static IS_THROTTLED: AtomicBool = AtomicBool::new(false);
+        static IS_THROTTLED: AtomicBool = const { AtomicBool::new(false) };
     }
 
     let should_send = IS_THROTTLED.with(|throttled| {
@@ -71,10 +71,8 @@ pub fn send_mouse_event_throttled(
     });
 
     if should_send {
-        if let Some(mut sender) = ws_sender.get()
-            && let Ok(json) = serde_json::to_string(&event)
-        {
-            let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
+        if let Some(sender) = ws_sender.get() {
+            let _ = sender.try_send_event(event);
         }
 
         let throttle_ms = cfg.get_value().theme.mouse_throttle_ms;

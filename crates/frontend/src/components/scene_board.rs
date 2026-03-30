@@ -5,7 +5,6 @@ use crate::components::cursor::Cursor;
 use crate::components::websocket::{CursorSignals, FileTransferState, WsSender};
 use crate::config;
 use crate::config::Theme;
-use gloo_net::websocket::Message;
 use leptos::ev;
 use leptos::html;
 use leptos::prelude::*;
@@ -102,8 +101,7 @@ fn board_metrics(scene: &Scene, viewport_width: f64, viewport_height: f64) -> (f
 
     let cell_size = (usable_width / columns)
         .min(usable_height / rows)
-        .min(MAX_CELL_SIZE_PX)
-        .max(MIN_CELL_SIZE_PX);
+        .clamp(MIN_CELL_SIZE_PX, MAX_CELL_SIZE_PX);
 
     let board_width = columns * cell_size;
     let board_height = rows * cell_size;
@@ -303,10 +301,8 @@ fn update_scene_position(scenes: RwSignal<Vec<Scene>>, scene_id: &str, x: f64, y
 }
 
 fn send_event(ws_sender: &ReadSignal<Option<WsSender>>, event: ClientEvent) {
-    if let Some(mut sender) = ws_sender.get_untracked()
-        && let Ok(json) = serde_json::to_string(&event)
-    {
-        let _ = sender.try_send(Message::Text(json));
+    if let Some(sender) = ws_sender.get_untracked() {
+        let _ = sender.try_send_event(event);
     }
 }
 
@@ -449,21 +445,20 @@ pub fn SceneBoard(
         });
 
         let mouse_up_handle = window_event_listener(ev::mouseup, move |_event: MouseEvent| {
-            if let Some(scene_id) = dragging_scene_id.get_untracked() {
-                if drag_did_move.get_untracked()
-                    && let Some(scene) = scenes
-                        .get_untracked()
-                        .into_iter()
-                        .find(|scene| scene.id == scene_id)
-                {
-                    send_event(
-                        &ws_sender,
-                        ClientEvent::SceneUpdate(SceneUpdatePayload {
-                            scene,
-                            actor: username.get_untracked(),
-                        }),
-                    );
-                }
+            if let Some(scene_id) = dragging_scene_id.get_untracked()
+                && drag_did_move.get_untracked()
+                && let Some(scene) = scenes
+                    .get_untracked()
+                    .into_iter()
+                    .find(|scene| scene.id == scene_id)
+            {
+                send_event(
+                    &ws_sender,
+                    ClientEvent::SceneUpdate(SceneUpdatePayload {
+                        scene,
+                        actor: username.get_untracked(),
+                    }),
+                );
             }
 
             dragging_scene_id.set(None);
@@ -489,7 +484,7 @@ pub fn SceneBoard(
             let active_id = active_scene_id.get();
             let scene_items = scenes.get();
             if scene_items.is_empty() {
-                return view! { <></> }.into_any();
+                return ().into_any();
             }
 
             let mut layouts = build_scene_layouts(
@@ -590,9 +585,8 @@ pub fn SceneBoard(
                                 );
                                 let mut ordered_layouts = layouts;
                                 ordered_layouts.sort_by_key(|layout| {
-                                    let is_active = active_scene_id.get_untracked().as_deref()
-                                        == Some(layout.scene.id.as_str());
-                                    is_active
+                                    active_scene_id.get_untracked().as_deref()
+                                        == Some(layout.scene.id.as_str())
                                 });
 
                                 if let Some(layout) = ordered_layouts
@@ -828,7 +822,7 @@ pub fn SceneBoard(
                                                         )
                                                     />
                                                 }.into_any(),
-                                                None => view! { <></> }.into_any(),
+                                                None => ().into_any(),
                                             }}
                                             {if is_active {
                                                 view! {
@@ -856,7 +850,7 @@ pub fn SceneBoard(
                                                                 .collect_view()
                                                                 .into_any()
                                                         } else {
-                                                            view! { <></> }.into_any()
+                                                            ().into_any()
                                                         }}
                                                         {if show_minor_grid {
                                                             (0..=layout.scene.grid.rows)
@@ -877,7 +871,7 @@ pub fn SceneBoard(
                                                                 .collect_view()
                                                                 .into_any()
                                                         } else {
-                                                            view! { <></> }.into_any()
+                                                            ().into_any()
                                                         }}
                                                         {(0..=layout.scene.grid.columns)
                                                             .filter(|column| column % 5 == 0)
@@ -914,7 +908,7 @@ pub fn SceneBoard(
                                                     </svg>
                                                 }.into_any()
                                             } else {
-                                                view! { <></> }.into_any()
+                                                ().into_any()
                                             }}
                                             <div style="position: absolute; inset: 0; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);" />
                                             <div
@@ -956,7 +950,7 @@ pub fn SceneBoard(
                             }
                             .into_any()
                         } else {
-                            view! { <></> }.into_any()
+                            ().into_any()
                         }
                     }}
 

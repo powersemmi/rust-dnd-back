@@ -61,11 +61,11 @@ pub fn LoginForm(
                         match response.json::<LoginResponse>().await {
                             Ok(data) => {
                                 // Сохраняем токен в localStorage
-                                if let Some(window) = web_sys::window() {
-                                    if let Ok(Some(storage)) = window.local_storage() {
-                                        let _ = storage.set_item("jwt_token", &data.token);
-                                        let _ = storage.set_item("username", &username_val);
-                                    }
+                                if let Some(window) = web_sys::window()
+                                    && let Ok(Some(storage)) = window.local_storage()
+                                {
+                                    let _ = storage.set_item("jwt_token", &data.token);
+                                    let _ = storage.set_item("username", &username_val);
                                 }
                                 on_login_success.run(data.token);
                             }

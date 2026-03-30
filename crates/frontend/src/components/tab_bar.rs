@@ -63,13 +63,12 @@ where
                             <span>{label.clone()}</span>
                             {if closable {
                                 let value_for_close = value.clone();
-                                let on_close_cb = on_close.clone();
                                 view! {
                                     <span
                                         style="cursor: pointer; margin-left: 0.25rem; font-weight: bold;"
                                         on:click=move |e| {
                                             e.stop_propagation();
-                                            if let Some(ref cb) = on_close_cb {
+                                            if let Some(ref cb) = on_close {
                                                 cb.run(value_for_close.clone());
                                             }
                                         }
@@ -78,7 +77,7 @@ where
                                     </span>
                                 }.into_any()
                             } else {
-                                view! { <></> }.into_any()
+                                ().into_any()
                             }}
                         </button>
                     }

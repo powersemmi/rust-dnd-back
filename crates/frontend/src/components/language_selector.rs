@@ -24,10 +24,10 @@ pub fn LanguageSelector(initial_locale: Locale, theme: Theme) -> impl IntoView {
         set_current_locale.set(new_locale);
 
         // Save to localStorage
-        if let Some(window) = web_sys::window() {
-            if let Ok(Some(storage)) = window.local_storage() {
-                let _ = storage.set_item("locale", &value);
-            }
+        if let Some(window) = web_sys::window()
+            && let Ok(Some(storage)) = window.local_storage()
+        {
+            let _ = storage.set_item("locale", &value);
         }
     };
 

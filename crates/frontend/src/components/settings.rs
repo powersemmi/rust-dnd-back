@@ -22,10 +22,10 @@ pub fn Settings(#[prop(into)] is_open: RwSignal<bool>, theme: Theme) -> impl Int
         i18n.set_locale(new_locale);
 
         // Save to localStorage
-        if let Some(window) = web_sys::window() {
-            if let Ok(Some(storage)) = window.local_storage() {
-                let _ = storage.set_item("locale", &value);
-            }
+        if let Some(window) = web_sys::window()
+            && let Ok(Some(storage)) = window.local_storage()
+        {
+            let _ = storage.set_item("locale", &value);
         }
     };
 

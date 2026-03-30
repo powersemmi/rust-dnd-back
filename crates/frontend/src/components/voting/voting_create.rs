@@ -134,7 +134,7 @@ pub fn VotingCreate(
                                                 </button>
                                             }.into_any()
                                         } else {
-                                            view! {}.into_any()
+                                            ().into_any()
                                         }
                                     }}
                                 </div>
@@ -232,13 +232,13 @@ pub fn VotingCreate(
                                             </div>
                                         }.into_any()
                                     } else {
-                                        view! {}.into_any()
+                                        ().into_any()
                                     }
                                 }}
                             </div>
                         }.into_any()
                     } else {
-                        view! {}.into_any()
+                        ().into_any()
                     }
                 }}
 

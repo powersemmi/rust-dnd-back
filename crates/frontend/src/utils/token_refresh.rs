@@ -74,13 +74,13 @@ async fn refresh_token_request(back_url: &str, api_path: &str) -> Result<(), Str
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
     // Сохраняем новый токен
-    if let Some(window) = web_sys::window() {
-        if let Ok(Some(storage)) = window.local_storage() {
-            storage
-                .set_item("jwt_token", &refresh_response.token)
-                .map_err(|_| "Failed to save new token".to_string())?;
-            debug!("Token refreshed successfully");
-        }
+    if let Some(window) = web_sys::window()
+        && let Ok(Some(storage)) = window.local_storage()
+    {
+        storage
+            .set_item("jwt_token", &refresh_response.token)
+            .map_err(|_| "Failed to save new token".to_string())?;
+        debug!("Token refreshed successfully");
     }
 
     Ok(())

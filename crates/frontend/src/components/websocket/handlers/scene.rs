@@ -1,4 +1,3 @@
-use crate::components::statistics::StateEvent;
 use crate::components::websocket::{storage, utils};
 use leptos::prelude::*;
 use shared::events::{
@@ -7,6 +6,8 @@ use shared::events::{
 };
 use std::cell::RefCell;
 use std::rc::Rc;
+
+use super::HandlerContext;
 
 const MAX_SCENES_PER_ROOM: usize = 50;
 
@@ -20,20 +21,9 @@ fn sync_scene_signals(
     active_scene_id_signal.set(state.active_scene_id.clone());
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn handle_scene_create(
-    payload: SceneCreatePayload,
-    room_state: &Rc<RefCell<RoomState>>,
-    local_version: &Rc<RefCell<u64>>,
-    last_synced_version: &Rc<RefCell<u64>>,
-    my_username: &str,
-    room_name: &str,
-    scenes_signal: RwSignal<Vec<Scene>>,
-    active_scene_id_signal: RwSignal<Option<String>>,
-    state_events: RwSignal<Vec<StateEvent>>,
-) {
+pub fn handle_scene_create(payload: SceneCreatePayload, ctx: &HandlerContext<'_>) {
     let current_ver = {
-        let mut state = room_state.borrow_mut();
+        let mut state = ctx.room_state.borrow_mut();
         if state
             .scenes
             .iter()
@@ -52,35 +42,28 @@ pub fn handle_scene_create(
         state.version
     };
 
-    *local_version.borrow_mut() = current_ver;
-    if payload.actor != my_username {
-        *last_synced_version.borrow_mut() = current_ver;
+    *ctx.local_version.borrow_mut() = current_ver;
+    if payload.actor != ctx.my_username {
+        *ctx.last_synced_version.borrow_mut() = current_ver;
     }
 
-    sync_scene_signals(room_state, scenes_signal, active_scene_id_signal);
-    storage::save_state_in_background(room_name, &room_state.borrow());
+    sync_scene_signals(
+        ctx.room_state,
+        ctx.scenes_signal,
+        ctx.active_scene_id_signal,
+    );
+    storage::save_state_in_background(ctx.room_name, &ctx.room_state.borrow());
     utils::log_event(
-        state_events,
+        ctx.state_events,
         current_ver,
         "SCENE_CREATE",
         &format!("{} created scene '{}'", payload.actor, payload.scene.name),
     );
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn handle_scene_update(
-    payload: SceneUpdatePayload,
-    room_state: &Rc<RefCell<RoomState>>,
-    local_version: &Rc<RefCell<u64>>,
-    last_synced_version: &Rc<RefCell<u64>>,
-    my_username: &str,
-    room_name: &str,
-    scenes_signal: RwSignal<Vec<Scene>>,
-    active_scene_id_signal: RwSignal<Option<String>>,
-    state_events: RwSignal<Vec<StateEvent>>,
-) {
+pub fn handle_scene_update(payload: SceneUpdatePayload, ctx: &HandlerContext<'_>) {
     let current_ver = {
-        let mut state = room_state.borrow_mut();
+        let mut state = ctx.room_state.borrow_mut();
         let Some(scene) = state
             .scenes
             .iter_mut()
@@ -94,35 +77,28 @@ pub fn handle_scene_update(
         state.version
     };
 
-    *local_version.borrow_mut() = current_ver;
-    if payload.actor != my_username {
-        *last_synced_version.borrow_mut() = current_ver;
+    *ctx.local_version.borrow_mut() = current_ver;
+    if payload.actor != ctx.my_username {
+        *ctx.last_synced_version.borrow_mut() = current_ver;
     }
 
-    sync_scene_signals(room_state, scenes_signal, active_scene_id_signal);
-    storage::save_state_in_background(room_name, &room_state.borrow());
+    sync_scene_signals(
+        ctx.room_state,
+        ctx.scenes_signal,
+        ctx.active_scene_id_signal,
+    );
+    storage::save_state_in_background(ctx.room_name, &ctx.room_state.borrow());
     utils::log_event(
-        state_events,
+        ctx.state_events,
         current_ver,
         "SCENE_UPDATE",
         &format!("{} updated scene '{}'", payload.actor, payload.scene.name),
     );
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn handle_scene_delete(
-    payload: SceneDeletePayload,
-    room_state: &Rc<RefCell<RoomState>>,
-    local_version: &Rc<RefCell<u64>>,
-    last_synced_version: &Rc<RefCell<u64>>,
-    my_username: &str,
-    room_name: &str,
-    scenes_signal: RwSignal<Vec<Scene>>,
-    active_scene_id_signal: RwSignal<Option<String>>,
-    state_events: RwSignal<Vec<StateEvent>>,
-) {
+pub fn handle_scene_delete(payload: SceneDeletePayload, ctx: &HandlerContext<'_>) {
     let (current_ver, deleted_name) = {
-        let mut state = room_state.borrow_mut();
+        let mut state = ctx.room_state.borrow_mut();
         let Some(index) = state
             .scenes
             .iter()
@@ -141,35 +117,28 @@ pub fn handle_scene_delete(
         (state.version, deleted_scene.name)
     };
 
-    *local_version.borrow_mut() = current_ver;
-    if payload.actor != my_username {
-        *last_synced_version.borrow_mut() = current_ver;
+    *ctx.local_version.borrow_mut() = current_ver;
+    if payload.actor != ctx.my_username {
+        *ctx.last_synced_version.borrow_mut() = current_ver;
     }
 
-    sync_scene_signals(room_state, scenes_signal, active_scene_id_signal);
-    storage::save_state_in_background(room_name, &room_state.borrow());
+    sync_scene_signals(
+        ctx.room_state,
+        ctx.scenes_signal,
+        ctx.active_scene_id_signal,
+    );
+    storage::save_state_in_background(ctx.room_name, &ctx.room_state.borrow());
     utils::log_event(
-        state_events,
+        ctx.state_events,
         current_ver,
         "SCENE_DELETE",
         &format!("{} deleted scene '{}'", payload.actor, deleted_name),
     );
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn handle_scene_activate(
-    payload: SceneActivatePayload,
-    room_state: &Rc<RefCell<RoomState>>,
-    local_version: &Rc<RefCell<u64>>,
-    last_synced_version: &Rc<RefCell<u64>>,
-    my_username: &str,
-    room_name: &str,
-    scenes_signal: RwSignal<Vec<Scene>>,
-    active_scene_id_signal: RwSignal<Option<String>>,
-    state_events: RwSignal<Vec<StateEvent>>,
-) {
+pub fn handle_scene_activate(payload: SceneActivatePayload, ctx: &HandlerContext<'_>) {
     let (current_ver, activated_name) = {
-        let mut state = room_state.borrow_mut();
+        let mut state = ctx.room_state.borrow_mut();
         let Some(scene_name) = state
             .scenes
             .iter()
@@ -188,15 +157,19 @@ pub fn handle_scene_activate(
         (state.version, scene_name)
     };
 
-    *local_version.borrow_mut() = current_ver;
-    if payload.actor != my_username {
-        *last_synced_version.borrow_mut() = current_ver;
+    *ctx.local_version.borrow_mut() = current_ver;
+    if payload.actor != ctx.my_username {
+        *ctx.last_synced_version.borrow_mut() = current_ver;
     }
 
-    sync_scene_signals(room_state, scenes_signal, active_scene_id_signal);
-    storage::save_state_in_background(room_name, &room_state.borrow());
+    sync_scene_signals(
+        ctx.room_state,
+        ctx.scenes_signal,
+        ctx.active_scene_id_signal,
+    );
+    storage::save_state_in_background(ctx.room_name, &ctx.room_state.borrow());
     utils::log_event(
-        state_events,
+        ctx.state_events,
         current_ver,
         "SCENE_ACTIVATE",
         &format!("{} activated scene '{}'", payload.actor, activated_name),

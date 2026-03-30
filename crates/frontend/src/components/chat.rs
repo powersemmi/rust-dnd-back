@@ -25,7 +25,7 @@ pub fn ChatWindow(
     // Функция для скролла вниз
     let scroll_to_bottom = move || {
         if let Some(container) = messages_container_ref.get() {
-            let _ = container.set_scroll_top(container.scroll_height());
+            container.set_scroll_top(container.scroll_height());
         }
     };
 
@@ -68,11 +68,8 @@ pub fn ChatWindow(
             username: username.get_untracked(),
         };
 
-        if let Some(mut sender) = ws_sender.get_untracked() {
-            let event = ClientEvent::ChatMessage(msg);
-            if let Ok(json) = serde_json::to_string(&event) {
-                let _ = sender.try_send(gloo_net::websocket::Message::Text(json));
-            }
+        if let Some(sender) = ws_sender.get_untracked() {
+            let _ = sender.try_send_event(ClientEvent::ChatMessage(msg));
         }
         set_input_text.set(String::new());
 
