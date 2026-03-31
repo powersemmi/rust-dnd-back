@@ -13,6 +13,25 @@ use shared::events::{ChatMessagePayload, DirectMessagePayload, FileRef};
 use web_sys::{Event, HtmlInputElement};
 
 const CHAT_BODY_FONT_SIZE: &str = "clamp(0.9rem, 0.87rem + 0.12vw, 0.98rem)";
+
+/// Unified display entry for the sorted chat list.
+/// Regular messages are converted to this when they arrive; DMs use their
+/// own `sent_at_ms` as the sort key.
+#[derive(Clone)]
+struct ChatDisplayEntry {
+    /// Sort key — milliseconds since Unix epoch.
+    ts: f64,
+    /// `true` for private (DM) entries.
+    is_dm: bool,
+    /// Sender username (always set).
+    from: String,
+    /// Recipient — only set for DM entries.
+    to: String,
+    /// Message text.
+    body: String,
+    /// File attachments — only regular messages can have these.
+    attachments: Vec<FileRef>,
+}
 const CHAT_META_FONT_SIZE: &str = "clamp(0.72rem, 0.69rem + 0.12vw, 0.8rem)";
 const CHAT_BUTTON_FONT_SIZE: &str = "clamp(0.84rem, 0.81rem + 0.12vw, 0.92rem)";
 
@@ -362,6 +381,83 @@ pub fn ChatWindow(
     let attachment_input_ref = NodeRef::<html::Input>::new();
     let messages_container_ref = NodeRef::<html::Div>::new();
 
+    // Sorted unified list of all display entries (regular + DM), keyed by ts.
+    let chat_entries: RwSignal<Vec<ChatDisplayEntry>> = RwSignal::new(Vec::new());
+    // Track how many regular messages we have already added to chat_entries so
+    // we can detect incremental additions vs full snapshot replacements.
+    let prev_msg_len: RwSignal<usize> = RwSignal::new(0);
+
+    // Effect: merge regular messages into chat_entries with local timestamps.
+    {
+        Effect::new(move |_| {
+            let msgs = messages.get();
+            let prev = prev_msg_len.get_untracked();
+            let now = js_sys::Date::now();
+
+            chat_entries.update(|entries| {
+                if msgs.len() > prev {
+                    // Incremental append: assign current time to new messages.
+                    for msg in &msgs[prev..] {
+                        entries.push(ChatDisplayEntry {
+                            ts: now,
+                            is_dm: false,
+                            from: msg.username.clone(),
+                            to: String::new(),
+                            body: msg.payload.clone(),
+                            attachments: msg.attachments.clone(),
+                        });
+                    }
+                } else {
+                    // Snapshot replacement: rebuild all regular entries with
+                    // virtual timestamps spaced 100 ms apart in the past.
+                    entries.retain(|e| e.is_dm);
+                    let base = now - (msgs.len() as f64) * 100.0;
+                    for (idx, msg) in msgs.iter().enumerate() {
+                        entries.push(ChatDisplayEntry {
+                            ts: base + (idx as f64) * 100.0,
+                            is_dm: false,
+                            from: msg.username.clone(),
+                            to: String::new(),
+                            body: msg.payload.clone(),
+                            attachments: msg.attachments.clone(),
+                        });
+                    }
+                    entries.sort_by(|a, b| {
+                        a.ts.partial_cmp(&b.ts).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                }
+            });
+            prev_msg_len.set(msgs.len());
+        });
+    }
+
+    // Effect: append new DMs to chat_entries using their own sent_at_ms.
+    {
+        let prev_dm_len: RwSignal<usize> = RwSignal::new(0);
+        Effect::new(move |_| {
+            let dms = direct_messages.get();
+            let prev = prev_dm_len.get_untracked();
+            if dms.len() > prev {
+                chat_entries.update(|entries| {
+                    for dm in &dms[prev..] {
+                        entries.push(ChatDisplayEntry {
+                            ts: dm.sent_at_ms,
+                            is_dm: true,
+                            from: dm.from.clone(),
+                            to: dm.to.clone(),
+                            body: dm.body.clone(),
+                            attachments: vec![],
+                        });
+                        entries.sort_by(|a, b| {
+                            a.ts.partial_cmp(&b.ts).unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                    }
+                });
+            }
+            prev_dm_len.set(dms.len());
+        });
+    }
+
     {
         let file_transfer = file_transfer.clone();
         Effect::new(move || {
@@ -507,22 +603,42 @@ pub fn ChatWindow(
                 node_ref=messages_container_ref
                 style="flex: 1; overflow-y: auto; padding: 0.9375rem; display: flex; flex-direction: column; gap: 0.625rem;"
             >
-                // Regular chat messages
+                // Unified sorted message list (regular + DM).
                 {move || {
-                    messages
-                        .get()
-                        .into_iter()
-                        .map(|msg| {
-                            let my_name = username.get_untracked();
-                            let is_mine = msg.username == my_name;
+                    let my_name = username.get_untracked();
+                    chat_entries.get().into_iter().map(|entry| {
+                        let is_mine = entry.from == my_name;
+                        let align = if is_mine { "flex-end" } else { "flex-start" };
+
+                        if entry.is_dm {
+                            let header = format!("{} → @{}", entry.from, entry.to);
+                            let body = entry.body.clone();
+                            view! {
+                                <div style=format!(
+                                    "padding: 0.5rem 0.75rem; background: #2d1b4e; border-radius: 0.5rem; \
+                                     align-self: {}; max-width: 80%; word-wrap: break-word; display: flex; \
+                                     flex-direction: column; gap: 0.55rem; \
+                                     border: 1px solid rgba(139,92,246,0.35);",
+                                    align
+                                )>
+                                    <div style=format!(
+                                        "font-size: {}; color: #c4b5fd; margin-bottom: 0.125rem;",
+                                        CHAT_META_FONT_SIZE
+                                    )>{header}</div>
+                                    <div style=format!(
+                                        "color: {}; white-space: pre-wrap; font-size: {}; line-height: 1.45;",
+                                        dm_theme.ui_text_primary, CHAT_BODY_FONT_SIZE
+                                    )>{body}</div>
+                                </div>
+                            }.into_any()
+                        } else {
                             let bg_color = if is_mine {
                                 messages_theme.ui_button_primary
                             } else {
                                 messages_theme.ui_bg_secondary
                             };
-                            let align = if is_mine { "flex-end" } else { "flex-start" };
-                            let attachments = msg.attachments.clone();
-                            let has_text = !msg.payload.is_empty();
+                            let has_text = !entry.body.is_empty();
+                            let attachments = entry.attachments.clone();
                             view! {
                                 <div style=format!(
                                     "padding: 0.5rem 0.75rem; background: {}; border-radius: 0.5rem; \
@@ -532,16 +648,12 @@ pub fn ChatWindow(
                                     <div style=format!(
                                         "font-size: {}; color: {}; margin-bottom: 0.125rem;",
                                         CHAT_META_FONT_SIZE, messages_theme.ui_text_secondary
-                                    )>
-                                        {msg.username.clone()}
-                                    </div>
+                                    )>{entry.from.clone()}</div>
                                     {has_text.then(|| view! {
                                         <div style=format!(
                                             "color: {}; white-space: pre-wrap; font-size: {}; line-height: 1.45;",
                                             messages_theme.ui_text_primary, CHAT_BODY_FONT_SIZE
-                                        )>
-                                            {msg.payload.clone()}
-                                        </div>
+                                        )>{entry.body.clone()}</div>
                                     })}
                                     {(!attachments.is_empty()).then(|| view! {
                                         <div style="display: flex; flex-direction: column; gap: 0.55rem;">
@@ -557,43 +669,7 @@ pub fn ChatWindow(
                                         </div>
                                     })}
                                 </div>
-                            }
-                        })
-                        .collect_view()
-                }}
-
-                // Direct (private) messages — rendered from their own signal so
-                // they are never lost when the regular message list is overwritten
-                // by a room-state snapshot.
-                {move || {
-                    let my_name = username.get_untracked();
-                    direct_messages.get().into_iter().map(|dm: DirectMessagePayload| {
-                        let is_mine = dm.from == my_name;
-                        let align = if is_mine { "flex-end" } else { "flex-start" };
-                        // "sender → @recipient"
-                        let header = format!("{} → @{}", dm.from, dm.to);
-                        let body = dm.body.clone();
-                        view! {
-                            <div style=format!(
-                                "padding: 0.5rem 0.75rem; background: #2d1b4e; border-radius: 0.5rem; \
-                                 align-self: {}; max-width: 80%; word-wrap: break-word; display: flex; \
-                                 flex-direction: column; gap: 0.55rem; \
-                                 border: 1px solid rgba(139,92,246,0.35);",
-                                align
-                            )>
-                                <div style=format!(
-                                    "font-size: {}; color: #c4b5fd; margin-bottom: 0.125rem;",
-                                    CHAT_META_FONT_SIZE
-                                )>
-                                    {header}
-                                </div>
-                                <div style=format!(
-                                    "color: {}; white-space: pre-wrap; font-size: {}; line-height: 1.45;",
-                                    dm_theme.ui_text_primary, CHAT_BODY_FONT_SIZE
-                                )>
-                                    {body}
-                                </div>
-                            </div>
+                            }.into_any()
                         }
                     }).collect_view()
                 }}
