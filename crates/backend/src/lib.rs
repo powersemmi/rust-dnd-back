@@ -9,7 +9,16 @@ pub mod ws_policy;
 
 pub use config::Config;
 pub use error::{AppError, AppResult};
-use shared::events::{ChatMessagePayload, ClientEvent, MouseClickPayload};
+use shared::events::{
+    AttentionPingPayload, BoardPointerPayload, ChatMessagePayload, ClientEvent,
+    CryptoKeyAnnouncePayload, CryptoKeyWrapPayload, CryptoPayload, DirectMessagePayload,
+    EncryptedPayloadKind, FileAnnouncePayload, FileChunkPayload, FileRef, FileRequestPayload,
+    MouseClickPayload, NoteDeletePayload, NotePayload, NoteVisibility, PresenceAnnouncePayload,
+    PresenceRequestPayload, PresenceResponsePayload, Scene, SceneActivatePayload, SceneCreatePayload,
+    SceneDeletePayload, SceneGrid, SceneUpdatePayload, SyncSnapshotPayload,
+    SyncSnapshotRequestPayload, SyncVersionPayload, Token, TokenMovePayload, VotingCastPayload,
+    VotingEndPayload, VotingResultPayload, VotingStartPayload, WorldPoint,
+};
 pub use state::AppState;
 use utoipa::{Modify, OpenApi};
 
@@ -44,17 +53,59 @@ impl Modify for SecurityAddon {
         handlers::auth::refresh_token,
     ),
     components(
-        // 3. Регистрируем все структуры, участвующие в документации
         schemas(
+            // Core envelope
             ClientEvent,
+            // Chat / DM
             ChatMessagePayload,
-            MouseClickPayload
+            DirectMessagePayload,
+            // Crypto
+            CryptoKeyAnnouncePayload,
+            CryptoKeyWrapPayload,
+            CryptoPayload,
+            EncryptedPayloadKind,
+            // Cursor / presence
+            MouseClickPayload,
+            PresenceRequestPayload,
+            PresenceResponsePayload,
+            PresenceAnnouncePayload,
+            // Notes
+            NotePayload,
+            NoteDeletePayload,
+            NoteVisibility,
+            // Scenes / tokens
+            Scene,
+            SceneGrid,
+            SceneCreatePayload,
+            SceneUpdatePayload,
+            SceneDeletePayload,
+            SceneActivatePayload,
+            Token,
+            TokenMovePayload,
+            FileRef,
+            // Files
+            FileAnnouncePayload,
+            FileRequestPayload,
+            FileChunkPayload,
+            // Voting
+            VotingStartPayload,
+            VotingCastPayload,
+            VotingResultPayload,
+            VotingEndPayload,
+            // Sync
+            SyncVersionPayload,
+            SyncSnapshotRequestPayload,
+            SyncSnapshotPayload,
+            // Board tools
+            BoardPointerPayload,
+            AttentionPingPayload,
+            WorldPoint,
         ),
     ),
     modifiers(&SecurityAddon),
     tags(
         (name = "dnd-back", description = "D&D Virtual Tabletop API"),
-        (name = "WebSocket Protocol", description = "Формат сообщений Realtime API")
+        (name = "WebSocket Protocol", description = "Формат сообщений WebSocket Realtime API")
     )
 )]
 pub struct ApiDoc;

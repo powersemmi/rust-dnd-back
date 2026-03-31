@@ -18,7 +18,8 @@ use super::model::{
     BOARD_HANDLE_HEIGHT_PX, BoardTool, DRAG_EPSILON_PX, WORKSPACE_GRID_STEP_PX, ZOOM_STEP,
     board_background, centered_token_offset, clamp_zoom, grid_line_width_screen, ruler_distance,
     scene_allows_token_interaction, scene_shows_contents, selection_box, should_broadcast_cursor,
-    snap_token_position_to_grid, token_position_from_world, token_rect, world_to_screen,
+    snap_token_position_to_grid, token_position_from_world, token_rect, world_to_scene_cells,
+    world_to_screen,
 };
 use super::scene_geometry::{
     board_note_hit, build_scene_layouts, clamp_to_layout, place_library_token,
@@ -124,11 +125,15 @@ pub fn SceneBoard(
     let board_note_last_click = RwSignal::new(None::<BoardNoteClickState>);
     let board_note_focus_request = RwSignal::new(None::<BoardNoteSelection>);
 
-    // Per-user trail accumulation: cursor world positions for users in pointer mode.
-    // Keyed by username; value is world (x, y) points capped at 64 entries.
-    // Updated by a reactive Effect watching cursors + board_pointers.
-    let pointer_trails: RwSignal<std::collections::HashMap<String, Vec<(f64, f64)>>> =
-        RwSignal::new(std::collections::HashMap::new());
+    // How long a trail point stays visible (milliseconds).
+    const TRAIL_LIFETIME_MS: f64 = 150.0;
+
+    // Per-user trail: (world_x, world_y, timestamp_ms).
+    // Keyed by username. Includes both remote pointer users AND the local user
+    // when their pointer tool is active.
+    let pointer_trails: RwSignal<
+        std::collections::HashMap<String, Vec<(f64, f64, f64)>>,
+    > = RwSignal::new(std::collections::HashMap::new());
 
     Effect::new(move |_| {
         let current_room_id = room_id.get();
@@ -207,39 +212,72 @@ pub fn SceneBoard(
         });
     }
 
-    // Accumulate cursor world positions into per-user trails for all active pointer users.
-    // Runs whenever any cursor position changes OR the set of pointer users changes.
+    // Accumulate cursor world positions into per-user trails.
+    // Tracks remote pointer users (board_pointers) AND the local user when their
+    // pointer tool is active.  Each point stores a timestamp so stale points can
+    // be pruned by the cleanup timer below.
     {
         Effect::new(move |_| {
-            let active_users = board_pointers.get();
-            // Collect current positions BEFORE calling update() to track reactive deps properly.
-            let positions: Vec<(String, f64, f64)> = active_users
+            let active_remote = board_pointers.get();
+            let is_local_pointer = vm.active_tool.get() == BoardTool::Pointer;
+            let local_user = username.get_untracked();
+            let cursor_map = cursors.get();
+            let now = js_sys::Date::now();
+            let cutoff = now - TRAIL_LIFETIME_MS;
+
+            // Build position list: remote pointer users + local user if applicable.
+            let mut positions: Vec<(String, f64, f64)> = active_remote
                 .iter()
                 .filter_map(|user| {
-                    cursors
-                        .get()
+                    cursor_map
                         .get(user)
                         .map(|c| (user.clone(), c.x.get(), c.y.get()))
                 })
                 .collect();
+            if is_local_pointer {
+                if let Some(c) = cursor_map.get(&local_user) {
+                    positions.push((local_user.clone(), c.x.get(), c.y.get()));
+                }
+            }
+
             pointer_trails.update(|trails| {
-                // Remove trails for users who left pointer mode.
-                trails.retain(|user, _| active_users.contains(user.as_str()));
+                // Remove trails for users who are no longer in pointer mode.
+                trails.retain(|user, _| {
+                    active_remote.contains(user.as_str())
+                        || (is_local_pointer && user == &local_user)
+                });
                 for (user, x, y) in &positions {
                     let trail = trails.entry(user.clone()).or_default();
-                    let changed = trail
+                    // Drop stale points on each update to keep memory bounded.
+                    trail.retain(|(_, _, ts)| *ts > cutoff);
+                    let moved = trail
                         .last()
-                        .map(|(px, py)| (*px - x).abs() + (*py - y).abs() > 0.5)
+                        .map(|(px, py, _)| (*px - x).abs() + (*py - y).abs() > 0.5)
                         .unwrap_or(true);
-                    if changed {
-                        trail.push((*x, *y));
-                        if trail.len() > 64 {
-                            let excess = trail.len() - 64;
-                            trail.drain(0..excess);
-                        }
+                    if moved {
+                        trail.push((*x, *y, now));
                     }
                 }
             });
+        });
+    }
+
+    // Periodic cleanup: remove points older than TRAIL_LIFETIME_MS even when the
+    // mouse is not moving, so the trail fades and eventually disappears on its own.
+    {
+        let cleanup_trails = pointer_trails;
+        leptos::task::spawn_local(async move {
+            loop {
+                gloo_timers::future::TimeoutFuture::new(150).await;
+                let now = js_sys::Date::now();
+                let cutoff = now - TRAIL_LIFETIME_MS;
+                cleanup_trails.update(|trails| {
+                    for trail in trails.values_mut() {
+                        trail.retain(|(_, _, ts)| *ts > cutoff);
+                    }
+                    trails.retain(|_, trail| !trail.is_empty());
+                });
+            }
         });
     }
 
@@ -832,20 +870,33 @@ pub fn SceneBoard(
                                 }
 
                                 // Ruler tool: clicks set start/end measurement points.
+                                // Both points are clamped to the scene that contains
+                                // the start point so the ruler never leaves a single scene.
                                 if vm.active_tool.get_untracked() == BoardTool::Ruler {
                                     event.prevent_default();
+                                    let ruler_layouts = build_scene_layouts(&scenes.get_untracked());
                                     match (
                                         vm.ruler_start.get_untracked(),
                                         vm.ruler_end.get_untracked(),
                                     ) {
                                         (None, _) | (Some(_), Some(_)) => {
-                                            // First click or reset after full measurement.
-                                            vm.ruler_start.set(Some((world_x, world_y)));
-                                            vm.ruler_end.set(None);
+                                            // First click: anchor start only if inside a scene.
+                                            if let Some(layout) = ruler_layouts.iter().find(|l| {
+                                                point_inside_board(l, world_x, world_y)
+                                            }) {
+                                                let (sx, sy) = clamp_to_layout(world_x, world_y, layout);
+                                                vm.ruler_start.set(Some((sx, sy)));
+                                                vm.ruler_end.set(None);
+                                            }
                                         }
-                                        (Some(_), None) => {
-                                            // Second click: complete the measurement.
-                                            vm.ruler_end.set(Some((world_x, world_y)));
+                                        (Some(start), None) => {
+                                            // Second click: clamp end to the same scene as start.
+                                            let clamped = ruler_layouts
+                                                .iter()
+                                                .find(|l| point_inside_board(l, start.0, start.1))
+                                                .map(|l| clamp_to_layout(world_x, world_y, l))
+                                                .unwrap_or((world_x, world_y));
+                                            vm.ruler_end.set(Some(clamped));
                                         }
                                     }
                                     return;
@@ -2118,9 +2169,12 @@ pub fn SceneBoard(
                         let Some(start) = vm.ruler_start.get() else {
                             return ().into_any();
                         };
-                        // Determine end: either anchored or live cursor position.
+                        // Determine end: either anchored or live cursor clamped to start's scene.
+                        let ruler_scene_layout = build_scene_layouts(&scenes.get())
+                            .into_iter()
+                            .find(|l| point_inside_board(l, start.0, start.1));
                         let (end_wx, end_wy) = vm.ruler_end.get().unwrap_or_else(|| {
-                            super::model::screen_to_world(
+                            let cursor_wx = super::model::screen_to_world(
                                 vm.pointer_local_x.get(),
                                 vm.pointer_local_y.get(),
                                 vm.viewport_width.get(),
@@ -2128,18 +2182,32 @@ pub fn SceneBoard(
                                 vm.camera_x.get(),
                                 vm.camera_y.get(),
                                 vm.zoom.get(),
-                            )
+                            );
+                            // Clamp live cursor to the same scene boundary.
+                            ruler_scene_layout
+                                .as_ref()
+                                .map(|l| clamp_to_layout(cursor_wx.0, cursor_wx.1, l))
+                                .unwrap_or(cursor_wx)
                         });
 
-                        // Find active scene for cell_size_feet.
-                        let cell_size_feet = scenes.get()
-                            .into_iter()
-                            .find(|s| active_scene_id.get().as_deref() == Some(s.id.as_str()))
-                            .map(|s| s.grid.cell_size_feet)
+                        // Find the scene that contains the ruler start point, get
+                        // its cell_size_feet, and convert both endpoints to scene-local
+                        // cell coordinates for a proper DnD distance calculation.
+                        let scene_layouts_for_ruler = build_scene_layouts(&scenes.get());
+                        let ruler_layout = scene_layouts_for_ruler
+                            .iter()
+                            .find(|l| point_inside_board(l, start.0, start.1));
+                        let cell_size_feet = ruler_layout
+                            .map(|l| l.scene.grid.cell_size_feet)
                             .unwrap_or(5);
-
+                        let (start_cx, start_cy) = ruler_layout
+                            .map(|l| world_to_scene_cells(start.0, start.1, l.left(), l.top()))
+                            .unwrap_or((0.0, 0.0));
+                        let (end_cx, end_cy) = ruler_layout
+                            .map(|l| world_to_scene_cells(end_wx, end_wy, l.left(), l.top()))
+                            .unwrap_or((0.0, 0.0));
                         let (dcells, dfeet) = ruler_distance(
-                            start.0, start.1, end_wx, end_wy, cell_size_feet,
+                            start_cx, start_cy, end_cx, end_cy, cell_size_feet,
                         );
 
                         let cam_x = vm.camera_x.get();
@@ -2169,14 +2237,14 @@ pub fn SceneBoard(
                         let zoom = vm.zoom.get();
                         let vw = vm.viewport_width.get();
                         let vh = vm.viewport_height.get();
-                        pointer_trails.get().into_iter().map(|(user, world_pts)| {
+                        pointer_trails.get().into_iter().map(|(_, world_pts)| {
+                            // Drop the timestamp; only (x, y) screen coords go to the overlay.
                             let pts: Vec<(f64, f64)> = world_pts
                                 .iter()
-                                .map(|(wx, wy)| world_to_screen(*wx, *wy, vw, vh, cam_x, cam_y, zoom))
+                                .map(|(wx, wy, _ts)| world_to_screen(*wx, *wy, vw, vh, cam_x, cam_y, zoom))
                                 .collect();
                             view! {
                                 <PointerTrailOverlay
-                                    username=user
                                     points=pts
                                     active=true
                                     theme=toolbar_theme_pointer.clone()

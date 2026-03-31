@@ -153,7 +153,6 @@ pub fn RulerOverlay(
 /// Pointer trail overlay: renders a colored trail path for a remote user's pointer tool.
 #[component]
 pub fn PointerTrailOverlay(
-    username: String,
     /// Trail points in screen coordinates (oldest first, newest last).
     points: Vec<(f64, f64)>,
     /// Whether the pointer is currently active.
@@ -165,15 +164,8 @@ pub fn PointerTrailOverlay(
     }
 
     let tip = points.last().copied().unwrap_or((0.0, 0.0));
-
-    // Build SVG polyline points string
-    let polyline_pts = points
-        .iter()
-        .map(|(x, y)| format!("{x:.2},{y:.2}"))
-        .collect::<Vec<_>>()
-        .join(" ");
-
     let cursor_color = theme.other_cursor_color;
+    let n = points.len();
 
     view! {
         <svg
@@ -181,23 +173,33 @@ pub fn PointerTrailOverlay(
             width="100%"
             height="100%"
         >
-            // Trail
-            <polyline
-                points=polyline_pts
-                fill="none"
-                stroke=cursor_color
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                opacity=if active { "0.7" } else { "0.3" }
-            />
-            // Tip circle
+            // Segments: thick tail (oldest) tapering to thin tip (newest),
+            // with opacity that also increases towards the tip.
+            {points.windows(2).enumerate().map(|(i, pair)| {
+                let frac = (i + 1) as f64 / n as f64;   // 0 = oldest, 1 = newest
+                let opacity = frac * 0.85;
+                // Width from 5 px (oldest) down to 1 px (newest tip).
+                let stroke_width = 5.0 * (1.0 - frac) + 1.0;
+                let (x1, y1) = pair[0];
+                let (x2, y2) = pair[1];
+                view! {
+                    <line
+                        x1=format!("{x1:.2}") y1=format!("{y1:.2}")
+                        x2=format!("{x2:.2}") y2=format!("{y2:.2}")
+                        stroke=cursor_color
+                        stroke-width=format!("{stroke_width:.2}")
+                        stroke-linecap="round"
+                        opacity=format!("{opacity:.3}")
+                    />
+                }
+            }).collect_view()}
+            // Tip dot
             {if active {
                 view! {
                     <circle
                         cx=format!("{:.2}", tip.0)
                         cy=format!("{:.2}", tip.1)
-                        r="6"
+                        r="4"
                         fill=cursor_color
                         opacity="0.9"
                     />
@@ -206,23 +208,6 @@ pub fn PointerTrailOverlay(
                 ().into_any()
             }}
         </svg>
-        // Username label near tip
-        {if active {
-            view! {
-                <div style=format!(
-                    "position: absolute; left: {:.2}px; top: {:.2}px; \
-                     transform: translate(10px, -50%); \
-                     background: rgba(0,0,0,0.6); color: {}; \
-                     font-size: 0.7rem; padding: 0.1rem 0.35rem; \
-                     border-radius: 0.3rem; pointer-events: none; z-index: 10;",
-                    tip.0, tip.1, cursor_color
-                )>
-                    {username.clone()}
-                </div>
-            }.into_any()
-        } else {
-            ().into_any()
-        }}
     }.into_any()
 }
 

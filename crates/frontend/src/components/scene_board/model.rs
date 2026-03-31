@@ -14,28 +14,39 @@ pub enum BoardTool {
     Pointer,
 }
 
-/// Calculates the DnD ruler distance between two world-coordinate points within a scene.
+/// Calculates the DnD ruler distance between two points given in **scene-local
+/// cell coordinates** (i.e. already divided by the scene's pixel-per-cell ratio).
 ///
-/// Returns `(distance_cells, distance_feet)` where:
-/// - `distance_cells` is the Euclidean distance in grid cells (using DnD diagonal rules:
-///   diagonal counts as 1 square, not √2, matching standard DnD 5e).
-/// - `distance_feet` is `distance_cells * cell_size_feet`.
+/// Call site is responsible for converting world coordinates to scene-local cells
+/// via `world_to_scene_cells` before passing them here.
 ///
-/// DnD 5e diagonal rule: every other diagonal costs 1.5 squares (round down per move).
-/// For simplicity we use the "every diagonal = 1 square" optional rule (flat grid distance).
+/// Returns `(distance_cells, distance_feet)`:
+/// - `distance_cells` — Chebyshev distance (DnD 5e "every diagonal = 1 square" rule).
+/// - `distance_feet`  — `distance_cells × cell_size_feet` of the measured scene.
 pub fn ruler_distance(
-    start_world_x: f64,
-    start_world_y: f64,
-    end_world_x: f64,
-    end_world_y: f64,
+    start_cell_x: f64,
+    start_cell_y: f64,
+    end_cell_x: f64,
+    end_cell_y: f64,
     cell_size_feet: u16,
 ) -> (f64, f64) {
-    let dx = (end_world_x - start_world_x).abs();
-    let dy = (end_world_y - start_world_y).abs();
-    // Chebyshev distance (Dnd "every diagonal = 1 square" variant).
+    let dx = (end_cell_x - start_cell_x).abs();
+    let dy = (end_cell_y - start_cell_y).abs();
+    // Chebyshev: every diagonal step counts as 1 square (5e optional rule).
     let cells = dx.max(dy);
     let feet = cells * f64::from(cell_size_feet);
     (cells, feet)
+}
+
+/// Converts a world-coordinate point to scene-local cell coordinates.
+///
+/// Cell (0, 0) is the top-left corner of the scene board; the maximum is
+/// (columns, rows).  Fractional values are allowed for sub-cell accuracy.
+pub fn world_to_scene_cells(wx: f64, wy: f64, board_left: f64, board_top: f64) -> (f64, f64) {
+    (
+        (wx - board_left) / WORKSPACE_SCENE_CELL_SIZE_PX,
+        (wy - board_top) / WORKSPACE_SCENE_CELL_SIZE_PX,
+    )
 }
 
 // --- Constants ---
@@ -411,6 +422,49 @@ mod tests {
     fn clamp_token_position_preserves_fractional_offset() {
         let (x, y) = clamp_token_position(8.75, 7.5, 10, 10, 2, 3);
         assert_eq!((x, y), (8.0, 7.0));
+    }
+
+    // --- ruler_distance + world_to_scene_cells ---
+
+    #[test]
+    fn ruler_distance_straight_horizontal_one_cell() {
+        // Already in cell coords: start=(0,0), end=(1,0), 5 ft/cell.
+        let (cells, feet) = ruler_distance(0.0, 0.0, 1.0, 0.0, 5);
+        assert!((cells - 1.0).abs() < 1e-9, "expected 1 cell, got {cells}");
+        assert!((feet - 5.0).abs() < 1e-9, "expected 5 ft, got {feet}");
+    }
+
+    #[test]
+    fn ruler_distance_diagonal_chebyshev() {
+        // 3 cells right, 4 cells up → Chebyshev = 4 cells (not 5 Euclidean).
+        let (cells, feet) = ruler_distance(0.0, 0.0, 3.0, 4.0, 5);
+        assert!((cells - 4.0).abs() < 1e-9, "expected 4 cells (Chebyshev), got {cells}");
+        assert!((feet - 20.0).abs() < 1e-9, "expected 20 ft, got {feet}");
+    }
+
+    #[test]
+    fn ruler_distance_respects_cell_size_feet() {
+        // 2 cells, scene uses 10 ft/cell → 20 ft.
+        let (cells, feet) = ruler_distance(0.0, 0.0, 2.0, 0.0, 10);
+        assert!((cells - 2.0).abs() < 1e-9);
+        assert!((feet - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn world_to_scene_cells_converts_correctly() {
+        // Board top-left at world (100, 200); cell size = 48 world units.
+        // Point at (148, 296) → cell (1.0, 2.0).
+        let (cx, cy) = world_to_scene_cells(148.0, 296.0, 100.0, 200.0);
+        assert!((cx - 1.0).abs() < 1e-9, "expected cx=1, got {cx}");
+        assert!((cy - 2.0).abs() < 1e-9, "expected cy=2, got {cy}");
+    }
+
+    #[test]
+    fn ruler_full_pipeline_15x15_scene() {
+        // 15×15 scene, 5 ft/cell. Measure from (0,0) to (10,0) in cell coords → 50 ft.
+        let (cells, feet) = ruler_distance(0.0, 0.0, 10.0, 0.0, 5);
+        assert!((cells - 10.0).abs() < 1e-9);
+        assert!((feet - 50.0).abs() < 1e-9);
     }
 
     #[test]
