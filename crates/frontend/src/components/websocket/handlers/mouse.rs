@@ -11,13 +11,6 @@ pub fn handle_mouse_event(
         return;
     }
 
-    leptos::logging::log!(
-        "🖱️ [MOUSE] Received world cursor from {}: ({:.2}, {:.2})",
-        mouse_event.user_id,
-        mouse_event.x,
-        mouse_event.y
-    );
-
     let now = js_sys::Date::now();
 
     set_cursors.update(|cursors| {
@@ -27,10 +20,6 @@ pub fn handle_mouse_event(
             cursor_signals.set_last_activity.set(now);
             cursor_signals.set_visible.set(true);
         } else {
-            leptos::logging::log!(
-                "🖱️ [MOUSE] Creating new cursor for: {}",
-                mouse_event.user_id
-            );
             let (x, set_x) = signal(mouse_event.x);
             let (y, set_y) = signal(mouse_event.y);
             let (last_activity, set_last_activity) = signal(now);
