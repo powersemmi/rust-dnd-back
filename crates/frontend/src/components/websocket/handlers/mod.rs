@@ -182,19 +182,17 @@ pub fn handle_event(event: ClientEvent, ctx: &HandlerContext<'_>) {
             });
         }
         ClientEvent::DirectMessage(payload) => {
-            if payload.to == ctx.my_username {
-                // Show received DM in the chat view with a visual DM marker so the
-                // recipient gets immediate feedback.  DMs are not persisted in room
-                // state and will be cleared on the next snapshot; that is acceptable.
-                let display = ChatMessagePayload {
-                    payload: format!("[DM from @{}]: {}", payload.from, payload.body),
-                    username: payload.from.clone(),
-                    attachments: vec![],
-                };
-                ctx.messages_signal.update(|msgs| msgs.push(display));
-                ctx.direct_messages.update(|msgs| {
-                    msgs.push(payload);
-                });
+            if payload.to == ctx.my_username
+                // Suppress the relay echo when the user DM'd themselves:
+                // the sender-side entry was already added in `do_send`.
+                && payload.from != ctx.my_username
+            {
+                // Show chat notification badge.
+                ctx.has_chat_notification.set(true);
+                ctx.chat_notification_count.update(|c| *c += 1);
+                // Store in the dedicated DM signal — it is never overwritten
+                // by snapshot restores so DMs persist for the full session.
+                ctx.direct_messages.update(|msgs| msgs.push(payload));
             }
         }
         _ => {}

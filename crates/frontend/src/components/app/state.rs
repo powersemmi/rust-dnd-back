@@ -382,6 +382,7 @@ pub fn App() -> impl IntoView {
                             <ChatWindow
                                 is_open=vm.is_chat_open
                                 messages=messages
+                                direct_messages=direct_messages
                                 file_transfer=file_transfer.clone()
                                 ws_sender=ws_sender
                                 username=username

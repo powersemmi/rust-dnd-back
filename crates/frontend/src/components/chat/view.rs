@@ -9,7 +9,7 @@ use leptos::html;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos::wasm_bindgen::JsCast;
-use shared::events::{ChatMessagePayload, FileRef};
+use shared::events::{ChatMessagePayload, DirectMessagePayload, FileRef};
 use web_sys::{Event, HtmlInputElement};
 
 const CHAT_BODY_FONT_SIZE: &str = "clamp(0.9rem, 0.87rem + 0.12vw, 0.98rem)";
@@ -347,6 +347,7 @@ fn ChatAttachmentCard(
 pub fn ChatWindow(
     #[prop(into)] is_open: RwSignal<bool>,
     #[prop(into)] messages: RwSignal<Vec<ChatMessagePayload>>,
+    #[prop(into)] direct_messages: RwSignal<Vec<shared::events::DirectMessagePayload>>,
     file_transfer: FileTransferState,
     ws_sender: ReadSignal<Option<WsSender>>,
     username: ReadSignal<String>,
@@ -455,12 +456,17 @@ pub fn ChatWindow(
                 if let Some((recipient, body)) =
                     ChatViewModel::parse_direct_message(&trimmed_draft)
                 {
-                    let dm_display = ChatMessagePayload {
-                        payload: format!("[DM → @{}]: {}", recipient, body),
-                        username: current_username.clone(),
-                        attachments: vec![],
-                    };
-                    messages.update(|msgs| msgs.push(dm_display));
+                    // Echo the sent DM into the direct_messages signal so it
+                    // appears in the DM section and survives snapshot overwrites.
+                    let now = js_sys::Date::now();
+                    direct_messages.update(|msgs| {
+                        msgs.push(DirectMessagePayload {
+                            from: current_username.clone(),
+                            to: recipient.to_string(),
+                            body: body.to_string(),
+                            sent_at_ms: now,
+                        });
+                    });
                 }
 
                 file_transfer.announce_local_files(
@@ -477,6 +483,7 @@ pub fn ChatWindow(
     };
 
     let messages_theme = theme.clone();
+    let dm_theme = theme.clone();
     let error_theme = theme.clone();
     let draft_theme = theme.clone();
     let do_send_on_enter = do_send;
@@ -500,6 +507,7 @@ pub fn ChatWindow(
                 node_ref=messages_container_ref
                 style="flex: 1; overflow-y: auto; padding: 0.9375rem; display: flex; flex-direction: column; gap: 0.625rem;"
             >
+                // Regular chat messages
                 {move || {
                     messages
                         .get()
@@ -527,42 +535,67 @@ pub fn ChatWindow(
                                     )>
                                         {msg.username.clone()}
                                     </div>
-                                    {has_text
-                                        .then(|| {
-                                            view! {
-                                                <div style=format!(
-                                                    "color: {}; white-space: pre-wrap; font-size: {}; line-height: 1.45;",
-                                                    messages_theme.ui_text_primary, CHAT_BODY_FONT_SIZE
-                                                )>
-                                                    {msg.payload.clone()}
-                                                </div>
-                                            }
-                                        })}
-                                    {(!attachments.is_empty())
-                                        .then(|| {
-                                            view! {
-                                                <div style="display: flex; flex-direction: column; gap: 0.55rem;">
-                                                    {attachments
-                                                        .into_iter()
-                                                        .map(|file| {
-                                                            view! {
-                                                                <ChatAttachmentCard
-                                                                    file=file
-                                                                    file_transfer=file_transfer.clone()
-                                                                    ws_sender=ws_sender
-                                                                    username=username
-                                                                    theme=messages_theme.clone()
-                                                                />
-                                                            }
-                                                        })
-                                                        .collect_view()}
-                                                </div>
-                                            }
-                                        })}
+                                    {has_text.then(|| view! {
+                                        <div style=format!(
+                                            "color: {}; white-space: pre-wrap; font-size: {}; line-height: 1.45;",
+                                            messages_theme.ui_text_primary, CHAT_BODY_FONT_SIZE
+                                        )>
+                                            {msg.payload.clone()}
+                                        </div>
+                                    })}
+                                    {(!attachments.is_empty()).then(|| view! {
+                                        <div style="display: flex; flex-direction: column; gap: 0.55rem;">
+                                            {attachments.into_iter().map(|file| view! {
+                                                <ChatAttachmentCard
+                                                    file=file
+                                                    file_transfer=file_transfer.clone()
+                                                    ws_sender=ws_sender
+                                                    username=username
+                                                    theme=messages_theme.clone()
+                                                />
+                                            }).collect_view()}
+                                        </div>
+                                    })}
                                 </div>
                             }
                         })
                         .collect_view()
+                }}
+
+                // Direct (private) messages — rendered from their own signal so
+                // they are never lost when the regular message list is overwritten
+                // by a room-state snapshot.
+                {move || {
+                    let my_name = username.get_untracked();
+                    direct_messages.get().into_iter().map(|dm: DirectMessagePayload| {
+                        let is_mine = dm.from == my_name;
+                        let align = if is_mine { "flex-end" } else { "flex-start" };
+                        // "sender → @recipient"
+                        let header = format!("{} → @{}", dm.from, dm.to);
+                        let body = dm.body.clone();
+                        view! {
+                            <div style=format!(
+                                "padding: 0.5rem 0.75rem; background: #2d1b4e; border-radius: 0.5rem; \
+                                 align-self: {}; max-width: 80%; word-wrap: break-word; display: flex; \
+                                 flex-direction: column; gap: 0.55rem; \
+                                 border: 1px solid rgba(139,92,246,0.35);",
+                                align
+                            )>
+                                <div style=format!(
+                                    "font-size: {}; color: #c4b5fd; margin-bottom: 0.125rem;",
+                                    CHAT_META_FONT_SIZE
+                                )>
+                                    {header}
+                                </div>
+                                <div style=format!(
+                                    "color: {}; white-space: pre-wrap; font-size: {}; line-height: 1.45;",
+                                    dm_theme.ui_text_primary, CHAT_BODY_FONT_SIZE
+                                )>
+                                    {body}
+                                </div>
+                            </div>
+                        }
+                    }).collect_view()
                 }}
             </div>
 
