@@ -1,10 +1,31 @@
+use super::board_note_helpers::{
+    apply_local_note_delete, apply_local_note_upsert, board_note_body_height, board_note_meta,
+    board_note_title_font_size_pt, clear_board_note_editor_state, collect_board_notes,
+    commit_board_note_draft, current_time_ms, find_matching_note, find_note_by_ref,
+    note_matches, persist_note_delete, persist_note_upsert,
+};
+use super::board_toolbar::{
+    AttentionPingAnimation, BoardToolbar, PointerTrailOverlay, RulerOverlay,
+};
+use super::interaction_state::{
+    BOARD_NOTE_COLORS, BOARD_NOTE_DOUBLE_CLICK_MS, BOARD_NOTE_FONT_SIZE_STEP_PT,
+    BOARD_NOTE_MAX_FONT_SIZE_PT, BOARD_NOTE_MAX_HEIGHT_PX, BOARD_NOTE_MAX_WIDTH_PX,
+    BOARD_NOTE_MIN_FONT_SIZE_PT, BOARD_NOTE_MIN_HEIGHT_PX, BOARD_NOTE_MIN_WIDTH_PX,
+    BOARD_NOTE_RESIZE_HANDLE_PX, BoardNoteClickState, BoardNoteEditorDraft, BoardNoteDragState,
+    BoardNoteResizeState, BoardNoteSelection, TOKEN_DRAG_EPSILON_CELLS, TokenMenuState,
+};
 use super::model::{
-    BOARD_HANDLE_GAP_PX, BOARD_HANDLE_HEIGHT_PX, BOARD_HANDLE_MAX_WIDTH_PX, DRAG_EPSILON_PX,
-    SNAP_THRESHOLD_PX, WORKSPACE_GRID_STEP_PX, ZOOM_STEP, board_background, centered_token_offset,
-    clamp_token_position, clamp_zoom, grid_line_width_screen, point_inside_rect,
+    BOARD_HANDLE_HEIGHT_PX, BoardTool, DRAG_EPSILON_PX, WORKSPACE_GRID_STEP_PX, ZOOM_STEP,
+    board_background, centered_token_offset, clamp_zoom, grid_line_width_screen, ruler_distance,
     scene_allows_token_interaction, scene_shows_contents, selection_box, should_broadcast_cursor,
-    snap_token_position_to_grid, token_position_from_world, token_rect, workspace_board_metrics,
-    world_to_screen,
+    snap_token_position_to_grid, token_position_from_world, token_rect, world_to_screen,
+};
+use super::scene_geometry::{
+    board_note_hit, build_scene_layouts, clamp_to_layout, place_library_token,
+    point_inside_board, point_inside_board_note_content, point_inside_handle,
+    remove_token_from_scene, send_event, snap_scene_position, sort_token_library_items, token_hit,
+    update_scene_position, update_token_details, update_token_position, viewport_local_point,
+    viewport_size,
 };
 use super::storage::{StoredCameraPosition, load_camera_position, save_camera_position};
 use super::token_editor::{SceneTokenEditor, SceneTokenEditorDraft, SceneTokenEditorValue};
@@ -18,11 +39,11 @@ use crate::components::app::mouse_handler::{
 use crate::components::cursor::Cursor;
 use crate::components::notes::model::{
     BOARD_NOTE_DRAG_MIME, can_delete_note, can_edit_note, note_heading_and_body,
-    note_title_from_markdown, render_note_html,
+    render_note_html,
 };
 use crate::components::websocket::{
-    CursorSignals, FileTransferState, StoredNoteBucket, StoredTokenLibraryItem, WsSender,
-    delete_note, save_note, save_token_library_item, token_library_key,
+    CursorSignals, FileTransferState, StoredTokenLibraryItem, WsSender, save_token_library_item,
+    token_library_key,
 };
 use crate::config;
 use crate::config::Theme;
@@ -32,673 +53,13 @@ use leptos::html;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use shared::events::{
-    ClientEvent, NoteBoardPosition, NoteBoardStyle, NoteDeletePayload, NotePayload, NoteVisibility,
-    Scene, SceneUpdatePayload, Token, TokenMovePayload,
+    AttentionPingPayload, ClientEvent, DirectMessagePayload, NoteBoardPosition, NotePayload,
+    NoteVisibility, Scene, SceneUpdatePayload, TokenMovePayload,
 };
-use uuid::Uuid;
+#[cfg(test)]
+use shared::events::NoteBoardStyle;
 use web_sys::{DragEvent, MouseEvent, WheelEvent};
 
-// ---------------------------------------------------------------------------
-// Local helpers (layout + geometry specific to this view)
-// ---------------------------------------------------------------------------
-
-#[derive(Clone)]
-struct SceneLayout {
-    scene: Scene,
-    cell_size: f64,
-    board_width: f64,
-    board_height: f64,
-}
-
-#[derive(Clone)]
-struct TokenMenuState {
-    scene_id: String,
-    token_id: String,
-    token: Token,
-    token_name: String,
-    screen_x: f64,
-    screen_y: f64,
-}
-
-#[derive(Clone)]
-struct BoardNoteSelection {
-    note_id: String,
-    visibility: NoteVisibility,
-}
-
-#[derive(Clone)]
-struct BoardNoteEditorDraft {
-    note_id: String,
-    visibility: NoteVisibility,
-    body: String,
-}
-
-#[derive(Clone)]
-struct BoardNoteDragState {
-    note_id: String,
-    visibility: NoteVisibility,
-    pointer_offset_x: f64,
-    pointer_offset_y: f64,
-    start_note_x: f64,
-    start_note_y: f64,
-}
-
-#[derive(Clone)]
-struct BoardNoteResizeState {
-    note_id: String,
-    visibility: NoteVisibility,
-    start_world_x: f64,
-    start_world_y: f64,
-    start_width_px: f64,
-    start_height_px: f64,
-}
-
-#[derive(Clone)]
-struct BoardNoteClickState {
-    note_id: String,
-    visibility: NoteVisibility,
-    at_ms: f64,
-}
-
-const TOKEN_DRAG_EPSILON_CELLS: f32 = 0.02;
-const BOARD_NOTE_MIN_WIDTH_PX: f64 = 180.0;
-const BOARD_NOTE_MIN_HEIGHT_PX: f64 = 140.0;
-const BOARD_NOTE_MAX_WIDTH_PX: f64 = 2100.0;
-const BOARD_NOTE_MAX_HEIGHT_PX: f64 = 2100.0;
-const BOARD_NOTE_TOOLBAR_HEIGHT_PX: f64 = 38.0;
-const BOARD_NOTE_RESIZE_HANDLE_PX: f64 = 16.0;
-const BOARD_NOTE_EDIT_PADDING_PX: f64 = 22.0;
-const BOARD_NOTE_DOUBLE_CLICK_MS: f64 = 320.0;
-const BOARD_NOTE_MIN_FONT_SIZE_PT: f64 = 8.0;
-const BOARD_NOTE_MAX_FONT_SIZE_PT: f64 = 72.0;
-const BOARD_NOTE_FONT_SIZE_STEP_PT: f64 = 2.0;
-const BOARD_NOTE_COLORS: [&str; 5] = ["#F8EE96", "#F7C5D5", "#BDEBD3", "#C7DCF9", "#F6D0A6"];
-
-fn current_time_ms() -> f64 {
-    js_sys::Date::now()
-}
-
-fn note_matches(note: &NotePayload, note_id: &str, visibility: &NoteVisibility) -> bool {
-    note.id == note_id && &note.visibility == visibility
-}
-
-fn upsert_note(notes: &mut Vec<NotePayload>, note: NotePayload) {
-    match notes.iter_mut().find(|existing| existing.id == note.id) {
-        Some(existing) => *existing = note,
-        None => notes.push(note),
-    }
-    notes.sort_by(|left, right| {
-        right
-            .updated_at_ms
-            .partial_cmp(&left.updated_at_ms)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| left.id.cmp(&right.id))
-    });
-}
-
-fn remove_note(notes: &mut Vec<NotePayload>, note_id: &str) {
-    notes.retain(|note| note.id != note_id);
-}
-
-fn collect_board_notes(
-    public_notes: &[NotePayload],
-    private_notes: &[NotePayload],
-    direct_notes: &[NotePayload],
-) -> Vec<NotePayload> {
-    public_notes
-        .iter()
-        .chain(private_notes.iter())
-        .chain(direct_notes.iter())
-        .filter(|note| note.board_position.is_some())
-        .cloned()
-        .collect()
-}
-
-fn find_matching_note(
-    note: &NotePayload,
-    public_notes: &[NotePayload],
-    private_notes: &[NotePayload],
-    direct_notes: &[NotePayload],
-) -> Option<NotePayload> {
-    public_notes
-        .iter()
-        .chain(private_notes.iter())
-        .chain(direct_notes.iter())
-        .find(|existing| existing.id == note.id && existing.visibility == note.visibility)
-        .cloned()
-}
-
-fn find_note_by_ref(
-    note_id: &str,
-    visibility: &NoteVisibility,
-    public_notes: &[NotePayload],
-    private_notes: &[NotePayload],
-    direct_notes: &[NotePayload],
-) -> Option<NotePayload> {
-    public_notes
-        .iter()
-        .chain(private_notes.iter())
-        .chain(direct_notes.iter())
-        .find(|note| note_matches(note, note_id, visibility))
-        .cloned()
-}
-
-fn apply_local_note_upsert(
-    public_notes: RwSignal<Vec<NotePayload>>,
-    private_notes: RwSignal<Vec<NotePayload>>,
-    direct_notes: RwSignal<Vec<NotePayload>>,
-    note: NotePayload,
-) {
-    match note.visibility.clone() {
-        NoteVisibility::Public => public_notes.update(|notes| upsert_note(notes, note.clone())),
-        NoteVisibility::Private => private_notes.update(|notes| upsert_note(notes, note.clone())),
-        NoteVisibility::Direct(_) => direct_notes.update(|notes| upsert_note(notes, note.clone())),
-    }
-}
-
-fn persist_note_upsert(
-    ws_sender: &ReadSignal<Option<WsSender>>,
-    room_id: &ReadSignal<String>,
-    username: &ReadSignal<String>,
-    note: NotePayload,
-) {
-    match note.visibility.clone() {
-        NoteVisibility::Public | NoteVisibility::Direct(_) => {
-            send_event(ws_sender, ClientEvent::NoteUpsert(note));
-        }
-        NoteVisibility::Private => {
-            let current_room = room_id.get_untracked();
-            let current_user = username.get_untracked();
-            spawn_local(async move {
-                let _ = save_note(
-                    &current_room,
-                    &current_user,
-                    StoredNoteBucket::Private,
-                    &note,
-                )
-                .await;
-            });
-        }
-    }
-}
-
-fn apply_local_note_delete(
-    public_notes: RwSignal<Vec<NotePayload>>,
-    private_notes: RwSignal<Vec<NotePayload>>,
-    direct_notes: RwSignal<Vec<NotePayload>>,
-    note_id: &str,
-    visibility: &NoteVisibility,
-) {
-    match visibility {
-        NoteVisibility::Public => public_notes.update(|notes| remove_note(notes, note_id)),
-        NoteVisibility::Private => private_notes.update(|notes| remove_note(notes, note_id)),
-        NoteVisibility::Direct(_) => direct_notes.update(|notes| remove_note(notes, note_id)),
-    }
-}
-
-fn persist_note_delete(
-    ws_sender: &ReadSignal<Option<WsSender>>,
-    room_id: &ReadSignal<String>,
-    username: &ReadSignal<String>,
-    note: &NotePayload,
-) {
-    match &note.visibility {
-        NoteVisibility::Public => {
-            send_event(
-                ws_sender,
-                ClientEvent::NoteDelete(NoteDeletePayload {
-                    id: note.id.clone(),
-                    author: note.author.clone(),
-                    visibility: note.visibility.clone(),
-                }),
-            );
-        }
-        NoteVisibility::Private => {
-            let current_room = room_id.get_untracked();
-            let current_user = username.get_untracked();
-            let note_id = note.id.clone();
-            spawn_local(async move {
-                let _ = delete_note(
-                    &current_room,
-                    &current_user,
-                    StoredNoteBucket::Private,
-                    &note_id,
-                )
-                .await;
-            });
-        }
-        NoteVisibility::Direct(_) => {
-            let current_user = username.get_untracked();
-            if note.author == current_user {
-                send_event(
-                    ws_sender,
-                    ClientEvent::NoteDelete(NoteDeletePayload {
-                        id: note.id.clone(),
-                        author: note.author.clone(),
-                        visibility: note.visibility.clone(),
-                    }),
-                );
-            } else {
-                let current_room = room_id.get_untracked();
-                let note_id = note.id.clone();
-                spawn_local(async move {
-                    let _ = delete_note(
-                        &current_room,
-                        &current_user,
-                        StoredNoteBucket::Direct,
-                        &note_id,
-                    )
-                    .await;
-                });
-            }
-        }
-    }
-}
-
-fn board_note_body_height(style: &NoteBoardStyle, is_selected: bool, is_editing: bool) -> f64 {
-    let controls_height = if is_editing {
-        BOARD_NOTE_TOOLBAR_HEIGHT_PX
-    } else {
-        0.0
-    };
-
-    let _ = is_selected;
-    (style.height_px - controls_height - 24.0).max(70.0)
-}
-
-fn board_note_meta(note: &NotePayload, current_username: &str) -> String {
-    match &note.visibility {
-        shared::events::NoteVisibility::Public => format!("@{}", note.author),
-        shared::events::NoteVisibility::Private => format!("@{} | private", note.author),
-        shared::events::NoteVisibility::Direct(recipient) if note.author == current_username => {
-            format!("@{} -> @{}", note.author, recipient)
-        }
-        shared::events::NoteVisibility::Direct(_) => format!("@{} -> you", note.author),
-    }
-}
-
-fn commit_board_note_draft(
-    draft: &BoardNoteEditorDraft,
-    board_note_editor_error: RwSignal<Option<String>>,
-    public_notes: RwSignal<Vec<NotePayload>>,
-    private_notes: RwSignal<Vec<NotePayload>>,
-    direct_notes: RwSignal<Vec<NotePayload>>,
-    ws_sender: &ReadSignal<Option<WsSender>>,
-    room_id: &ReadSignal<String>,
-    username: &ReadSignal<String>,
-) -> bool {
-    let body = draft.body.trim().to_string();
-    if body.is_empty() {
-        board_note_editor_error.set(Some("Note body is required".to_string()));
-        return false;
-    }
-
-    let Some(mut updated_note) = find_note_by_ref(
-        &draft.note_id,
-        &draft.visibility,
-        &public_notes.get_untracked(),
-        &private_notes.get_untracked(),
-        &direct_notes.get_untracked(),
-    ) else {
-        return false;
-    };
-
-    updated_note.title = note_title_from_markdown(&body);
-    updated_note.body = body;
-    updated_note.updated_at_ms = current_time_ms();
-    apply_local_note_upsert(
-        public_notes,
-        private_notes,
-        direct_notes,
-        updated_note.clone(),
-    );
-    persist_note_upsert(ws_sender, room_id, username, updated_note);
-    board_note_editor_error.set(None);
-    true
-}
-
-fn board_note_title_font_size_pt(font_size_pt: f64) -> f64 {
-    (font_size_pt * 1.2).clamp(10.0, 96.0)
-}
-
-fn clear_board_note_editor_state(
-    board_note_editor: RwSignal<Option<BoardNoteEditorDraft>>,
-    board_note_editor_error: RwSignal<Option<String>>,
-    board_note_focus_request: RwSignal<Option<BoardNoteSelection>>,
-) {
-    board_note_editor.set(None);
-    board_note_editor_error.set(None);
-    board_note_focus_request.set(None);
-}
-
-impl SceneLayout {
-    fn center_x(&self) -> f64 {
-        f64::from(self.scene.workspace_x)
-    }
-    fn center_y(&self) -> f64 {
-        f64::from(self.scene.workspace_y)
-    }
-    fn left(&self) -> f64 {
-        self.center_x() - self.board_width / 2.0
-    }
-    fn right(&self) -> f64 {
-        self.center_x() + self.board_width / 2.0
-    }
-    fn top(&self) -> f64 {
-        self.center_y() - self.board_height / 2.0
-    }
-    fn bottom(&self) -> f64 {
-        self.center_y() + self.board_height / 2.0
-    }
-
-    fn handle_width(&self) -> f64 {
-        self.board_width.min(BOARD_HANDLE_MAX_WIDTH_PX)
-    }
-    fn handle_left(&self) -> f64 {
-        self.center_x() - self.handle_width() / 2.0
-    }
-    fn handle_top(&self) -> f64 {
-        self.top() - BOARD_HANDLE_GAP_PX - BOARD_HANDLE_HEIGHT_PX
-    }
-}
-
-fn viewport_size() -> (f64, f64) {
-    let Some(window) = web_sys::window() else {
-        return (1280.0, 720.0);
-    };
-    let w = window
-        .inner_width()
-        .ok()
-        .and_then(|v| v.as_f64())
-        .unwrap_or(1280.0);
-    let h = window
-        .inner_height()
-        .ok()
-        .and_then(|v| v.as_f64())
-        .unwrap_or(720.0);
-    (w, h)
-}
-
-fn viewport_local_point(
-    viewport_ref: &NodeRef<html::Div>,
-    client_x: i32,
-    client_y: i32,
-) -> Option<(f64, f64)> {
-    let vp = viewport_ref.get()?;
-    let rect = vp.get_bounding_client_rect();
-    let x = (f64::from(client_x) - rect.left()).clamp(0.0, rect.width());
-    let y = (f64::from(client_y) - rect.top()).clamp(0.0, rect.height());
-    Some((x, y))
-}
-
-fn build_scene_layouts(scenes: &[Scene]) -> Vec<SceneLayout> {
-    scenes
-        .iter()
-        .cloned()
-        .map(|scene| {
-            let (cell_size, board_width, board_height) =
-                workspace_board_metrics(scene.grid.columns, scene.grid.rows);
-            SceneLayout {
-                scene,
-                cell_size,
-                board_width,
-                board_height,
-            }
-        })
-        .collect()
-}
-
-fn point_inside_board(layout: &SceneLayout, wx: f64, wy: f64) -> bool {
-    point_inside_rect(
-        wx,
-        wy,
-        layout.left(),
-        layout.top(),
-        layout.board_width,
-        layout.board_height,
-    )
-}
-
-fn point_inside_handle(layout: &SceneLayout, wx: f64, wy: f64) -> bool {
-    point_inside_rect(
-        wx,
-        wy,
-        layout.handle_left(),
-        layout.handle_top(),
-        layout.handle_width(),
-        BOARD_HANDLE_HEIGHT_PX,
-    )
-}
-
-fn board_note_hit(notes: &[NotePayload], wx: f64, wy: f64) -> Option<NotePayload> {
-    notes.iter().rev().find_map(|note| {
-        let position = note.board_position.as_ref()?;
-        point_inside_rect(
-            wx,
-            wy,
-            position.world_x,
-            position.world_y,
-            note.board_style.width_px,
-            note.board_style.height_px,
-        )
-        .then(|| note.clone())
-    })
-}
-
-fn point_inside_board_note_content(note: &NotePayload, wx: f64, wy: f64) -> bool {
-    let Some(position) = note.board_position.as_ref() else {
-        return false;
-    };
-
-    let inner_left = position.world_x + BOARD_NOTE_EDIT_PADDING_PX;
-    let inner_top = position.world_y + BOARD_NOTE_EDIT_PADDING_PX;
-    let inner_width = (note.board_style.width_px - BOARD_NOTE_EDIT_PADDING_PX * 2.0).max(0.0);
-    let inner_height = (note.board_style.height_px - BOARD_NOTE_EDIT_PADDING_PX * 2.0).max(0.0);
-
-    point_inside_rect(wx, wy, inner_left, inner_top, inner_width, inner_height)
-}
-
-fn token_hit(layout: &SceneLayout, wx: f64, wy: f64) -> Option<Token> {
-    layout
-        .scene
-        .tokens
-        .iter()
-        .rev()
-        .find(|token| {
-            let (left, top, width, height) = token_rect(
-                layout.left(),
-                layout.top(),
-                layout.cell_size,
-                token.x,
-                token.y,
-                token.width_cells,
-                token.height_cells,
-            );
-            point_inside_rect(wx, wy, left, top, width, height)
-        })
-        .cloned()
-}
-
-fn clamp_to_layout(wx: f64, wy: f64, layout: &SceneLayout) -> (f64, f64) {
-    (
-        wx.clamp(layout.left(), layout.right()),
-        wy.clamp(layout.top(), layout.bottom()),
-    )
-}
-
-fn snap_scene_position(
-    candidate_x: f64,
-    candidate_y: f64,
-    dragged_width: f64,
-    dragged_height: f64,
-    other_layouts: &[SceneLayout],
-) -> (f64, f64) {
-    let mut best = (candidate_x, candidate_y);
-    let mut best_score = f64::MAX;
-
-    for layout in other_layouts {
-        let h_targets = [
-            layout.center_y(),
-            layout.top() + dragged_height / 2.0,
-            layout.bottom() - dragged_height / 2.0,
-        ];
-        let v_targets = [
-            layout.center_x(),
-            layout.left() + dragged_width / 2.0,
-            layout.right() - dragged_width / 2.0,
-        ];
-
-        let neighbor_targets = [
-            (layout.right() + dragged_width / 2.0, h_targets[0]),
-            (layout.right() + dragged_width / 2.0, h_targets[1]),
-            (layout.right() + dragged_width / 2.0, h_targets[2]),
-            (layout.left() - dragged_width / 2.0, h_targets[0]),
-            (layout.left() - dragged_width / 2.0, h_targets[1]),
-            (layout.left() - dragged_width / 2.0, h_targets[2]),
-            (v_targets[0], layout.bottom() + dragged_height / 2.0),
-            (v_targets[1], layout.bottom() + dragged_height / 2.0),
-            (v_targets[2], layout.bottom() + dragged_height / 2.0),
-            (v_targets[0], layout.top() - dragged_height / 2.0),
-            (v_targets[1], layout.top() - dragged_height / 2.0),
-            (v_targets[2], layout.top() - dragged_height / 2.0),
-        ];
-
-        for (tx, ty) in neighbor_targets {
-            let dx = (candidate_x - tx).abs();
-            let dy = (candidate_y - ty).abs();
-            if dx <= SNAP_THRESHOLD_PX && dy <= SNAP_THRESHOLD_PX {
-                let score = dx + dy;
-                if score < best_score {
-                    best_score = score;
-                    best = (tx, ty);
-                }
-            }
-        }
-    }
-
-    best
-}
-
-fn update_scene_position(scenes: RwSignal<Vec<Scene>>, id: &str, x: f64, y: f64) {
-    scenes.update(|items| {
-        if let Some(scene) = items.iter_mut().find(|s| s.id == id) {
-            scene.workspace_x = x as f32;
-            scene.workspace_y = y as f32;
-        }
-    });
-}
-
-fn update_token_position(scenes: RwSignal<Vec<Scene>>, id: &str, x: f32, y: f32) {
-    scenes.update(|items| {
-        for scene in items {
-            if let Some(token) = scene.tokens.iter_mut().find(|token| token.id == id) {
-                token.x = x;
-                token.y = y;
-                break;
-            }
-        }
-    });
-}
-
-fn place_library_token(
-    scenes: RwSignal<Vec<Scene>>,
-    scene_id: &str,
-    token: &StoredTokenLibraryItem,
-    x: f32,
-    y: f32,
-) -> Option<Scene> {
-    let mut updated_scene = None::<Scene>;
-
-    scenes.update(|items| {
-        let Some(scene) = items.iter_mut().find(|scene| scene.id == scene_id) else {
-            return;
-        };
-
-        scene.tokens.push(Token {
-            id: Uuid::new_v4().to_string(),
-            name: token.name.clone(),
-            image: token.image.clone(),
-            x,
-            y,
-            width_cells: token.width_cells,
-            height_cells: token.height_cells,
-        });
-        updated_scene = Some(scene.clone());
-    });
-
-    updated_scene
-}
-
-fn remove_token_from_scene(
-    scenes: RwSignal<Vec<Scene>>,
-    scene_id: &str,
-    token_id: &str,
-) -> Option<Scene> {
-    let mut updated_scene = None::<Scene>;
-
-    scenes.update(|items| {
-        let Some(scene) = items.iter_mut().find(|scene| scene.id == scene_id) else {
-            return;
-        };
-
-        let original_len = scene.tokens.len();
-        scene.tokens.retain(|token| token.id != token_id);
-        if scene.tokens.len() != original_len {
-            updated_scene = Some(scene.clone());
-        }
-    });
-
-    updated_scene
-}
-
-fn update_token_details(
-    scenes: RwSignal<Vec<Scene>>,
-    scene_id: &str,
-    token_id: &str,
-    name: &str,
-    width_cells: u16,
-    height_cells: u16,
-) -> Option<Scene> {
-    let mut updated_scene = None::<Scene>;
-
-    scenes.update(|items| {
-        let Some(scene) = items.iter_mut().find(|scene| scene.id == scene_id) else {
-            return;
-        };
-
-        let columns = scene.grid.columns;
-        let rows = scene.grid.rows;
-        let Some(token) = scene.tokens.iter_mut().find(|token| token.id == token_id) else {
-            return;
-        };
-
-        token.name = name.to_string();
-        token.width_cells = width_cells;
-        token.height_cells = height_cells;
-        let (x, y) =
-            clamp_token_position(token.x, token.y, columns, rows, width_cells, height_cells);
-        token.x = x;
-        token.y = y;
-        updated_scene = Some(scene.clone());
-    });
-
-    updated_scene
-}
-
-fn sort_token_library_items(items: &mut [StoredTokenLibraryItem]) {
-    items.sort_by(|left, right| {
-        left.name
-            .to_lowercase()
-            .cmp(&right.name.to_lowercase())
-            .then_with(|| left.id.cmp(&right.id))
-    });
-}
-
-fn send_event(ws_sender: &ReadSignal<Option<WsSender>>, event: ClientEvent) {
-    if let Some(sender) = ws_sender.get_untracked() {
-        let _ = sender.try_send_event(event);
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -723,6 +84,12 @@ pub fn SceneBoard(
     username: ReadSignal<String>,
     config: config::Config,
     theme: Theme,
+    /// Usernames of remote users who have activated the pointer tool.
+    #[prop(into)] board_pointers: RwSignal<std::collections::HashSet<String>>,
+    #[prop(into)] attention_pings: RwSignal<Vec<AttentionPingPayload>>,
+    /// Received direct messages; available for a future DM panel component.
+    #[allow(unused_variables)]
+    #[prop(into)] direct_messages: RwSignal<Vec<DirectMessagePayload>>,
 ) -> impl IntoView {
     let i18n = use_i18n();
     let (initial_vw, initial_vh) = viewport_size();
@@ -756,6 +123,12 @@ pub fn SceneBoard(
     let board_note_resize_did_move = RwSignal::new(false);
     let board_note_last_click = RwSignal::new(None::<BoardNoteClickState>);
     let board_note_focus_request = RwSignal::new(None::<BoardNoteSelection>);
+
+    // Per-user trail accumulation: cursor world positions for users in pointer mode.
+    // Keyed by username; value is world (x, y) points capped at 64 entries.
+    // Updated by a reactive Effect watching cursors + board_pointers.
+    let pointer_trails: RwSignal<std::collections::HashMap<String, Vec<(f64, f64)>>> =
+        RwSignal::new(std::collections::HashMap::new());
 
     Effect::new(move |_| {
         let current_room_id = room_id.get();
@@ -815,6 +188,71 @@ pub fn SceneBoard(
         });
     }
 
+    // Broadcast BoardPointer toggle events when the tool is activated or deactivated.
+    // Only ONE event per toggle — no per-move data; trail is derived locally from cursors.
+    {
+        Effect::new(move |was_pointer: Option<bool>| {
+            let is_pointer = vm.active_tool.get() == BoardTool::Pointer;
+            let was_pointer = was_pointer.unwrap_or(false);
+            if is_pointer != was_pointer {
+                let event = ClientEvent::BoardPointer(shared::events::BoardPointerPayload {
+                    username: username.get_untracked(),
+                    active: is_pointer,
+                });
+                if let Some(sender) = ws_sender.get_untracked() {
+                    let _ = sender.try_send_event(event);
+                }
+            }
+            is_pointer
+        });
+    }
+
+    // Accumulate cursor world positions into per-user trails for all active pointer users.
+    // Runs whenever any cursor position changes OR the set of pointer users changes.
+    {
+        Effect::new(move |_| {
+            let active_users = board_pointers.get();
+            // Collect current positions BEFORE calling update() to track reactive deps properly.
+            let positions: Vec<(String, f64, f64)> = active_users
+                .iter()
+                .filter_map(|user| {
+                    cursors
+                        .get()
+                        .get(user)
+                        .map(|c| (user.clone(), c.x.get(), c.y.get()))
+                })
+                .collect();
+            pointer_trails.update(|trails| {
+                // Remove trails for users who left pointer mode.
+                trails.retain(|user, _| active_users.contains(user.as_str()));
+                for (user, x, y) in &positions {
+                    let trail = trails.entry(user.clone()).or_default();
+                    let changed = trail
+                        .last()
+                        .map(|(px, py)| (*px - x).abs() + (*py - y).abs() > 0.5)
+                        .unwrap_or(true);
+                    if changed {
+                        trail.push((*x, *y));
+                        if trail.len() > 64 {
+                            let excess = trail.len() - 64;
+                            trail.drain(0..excess);
+                        }
+                    }
+                }
+            });
+        });
+    }
+
+    // When ruler tool is deactivated, clear its measurement points.
+    {
+        Effect::new(move |_| {
+            if vm.active_tool.get() != BoardTool::Ruler {
+                vm.ruler_start.set(None);
+                vm.ruler_end.set(None);
+            }
+        });
+    }
+
     // Global event listeners
     Effect::new(move |_| {
         let resize_handle = window_event_listener(ev::resize, move |_| {
@@ -856,8 +294,17 @@ pub fn SceneBoard(
                 active_scene_id.get_untracked().as_deref(),
                 show_inactive_scene_contents.get_untracked(),
             ) {
-                send_mouse_event_throttled(world_x, world_y, current_user, ws_sender, config);
+                send_mouse_event_throttled(
+                    world_x,
+                    world_y,
+                    current_user.clone(),
+                    ws_sender,
+                    config,
+                );
             }
+
+            // Pointer tool: no per-move event needed.
+            // The trail is accumulated locally on each receiver from the MOUSE_EVENT stream.
 
             if let Some(scene_id) = vm.dragging_scene_id.get() {
                 let Some((_, candidate_x, candidate_y)) =
@@ -1256,6 +703,9 @@ pub fn SceneBoard(
             let token_menu_theme = theme.clone();
             let token_editor_theme = theme.clone();
             let workspace_hint_theme = theme.clone();
+            let toolbar_theme_main = theme.clone();
+            let toolbar_theme_pointer = theme.clone();
+            let toolbar_theme_ping = theme.clone();
             let file_urls = file_transfer.file_urls.get();
 
             let selection_overlay = if vm.is_selecting.get() {
@@ -1362,6 +812,45 @@ pub fn SceneBoard(
                                     vm.viewport_width.get(), vm.viewport_height.get(),
                                     vm.camera_x.get(), vm.camera_y.get(), vm.zoom.get(),
                                 );
+
+                                // Attention ping: Alt+LMB broadcasts a ping to all users.
+                                if event.alt_key() {
+                                    event.prevent_default();
+                                    let ping = ClientEvent::AttentionPing(
+                                        shared::events::AttentionPingPayload {
+                                            username: username.get_untracked(),
+                                            position: shared::events::WorldPoint {
+                                                x: world_x,
+                                                y: world_y,
+                                            },
+                                        },
+                                    );
+                                    if let Some(sender) = ws_sender.get_untracked() {
+                                        let _ = sender.try_send_event(ping);
+                                    }
+                                    return;
+                                }
+
+                                // Ruler tool: clicks set start/end measurement points.
+                                if vm.active_tool.get_untracked() == BoardTool::Ruler {
+                                    event.prevent_default();
+                                    match (
+                                        vm.ruler_start.get_untracked(),
+                                        vm.ruler_end.get_untracked(),
+                                    ) {
+                                        (None, _) | (Some(_), Some(_)) => {
+                                            // First click or reset after full measurement.
+                                            vm.ruler_start.set(Some((world_x, world_y)));
+                                            vm.ruler_end.set(None);
+                                        }
+                                        (Some(_), None) => {
+                                            // Second click: complete the measurement.
+                                            vm.ruler_end.set(Some((world_x, world_y)));
+                                        }
+                                    }
+                                    return;
+                                }
+
                                 let board_notes = collect_board_notes(
                                     &public_notes.get_untracked(),
                                     &private_notes.get_untracked(),
@@ -2619,6 +2108,110 @@ pub fn SceneBoard(
                             }}
                         </div>
                     </div>
+
+                    // Ruler overlay: rendered in screen space when ruler has a start point.
+                    {move || {
+                        let tool = vm.active_tool.get();
+                        if tool != BoardTool::Ruler {
+                            return ().into_any();
+                        }
+                        let Some(start) = vm.ruler_start.get() else {
+                            return ().into_any();
+                        };
+                        // Determine end: either anchored or live cursor position.
+                        let (end_wx, end_wy) = vm.ruler_end.get().unwrap_or_else(|| {
+                            super::model::screen_to_world(
+                                vm.pointer_local_x.get(),
+                                vm.pointer_local_y.get(),
+                                vm.viewport_width.get(),
+                                vm.viewport_height.get(),
+                                vm.camera_x.get(),
+                                vm.camera_y.get(),
+                                vm.zoom.get(),
+                            )
+                        });
+
+                        // Find active scene for cell_size_feet.
+                        let cell_size_feet = scenes.get()
+                            .into_iter()
+                            .find(|s| active_scene_id.get().as_deref() == Some(s.id.as_str()))
+                            .map(|s| s.grid.cell_size_feet)
+                            .unwrap_or(5);
+
+                        let (dcells, dfeet) = ruler_distance(
+                            start.0, start.1, end_wx, end_wy, cell_size_feet,
+                        );
+
+                        let cam_x = vm.camera_x.get();
+                        let cam_y = vm.camera_y.get();
+                        let zoom = vm.zoom.get();
+                        let vw = vm.viewport_width.get();
+                        let vh = vm.viewport_height.get();
+                        let (ssx, ssy) = world_to_screen(start.0, start.1, vw, vh, cam_x, cam_y, zoom);
+                        let (sex, sey) = world_to_screen(end_wx, end_wy, vw, vh, cam_x, cam_y, zoom);
+
+                        view! {
+                            <RulerOverlay
+                                start_screen_x=ssx
+                                start_screen_y=ssy
+                                end_screen_x=sex
+                                end_screen_y=sey
+                                distance_cells=dcells
+                                distance_feet=dfeet
+                            />
+                        }.into_any()
+                    }}
+
+                    // Remote board pointer trails: accumulated from cursor positions.
+                    {move || {
+                        let cam_x = vm.camera_x.get();
+                        let cam_y = vm.camera_y.get();
+                        let zoom = vm.zoom.get();
+                        let vw = vm.viewport_width.get();
+                        let vh = vm.viewport_height.get();
+                        pointer_trails.get().into_iter().map(|(user, world_pts)| {
+                            let pts: Vec<(f64, f64)> = world_pts
+                                .iter()
+                                .map(|(wx, wy)| world_to_screen(*wx, *wy, vw, vh, cam_x, cam_y, zoom))
+                                .collect();
+                            view! {
+                                <PointerTrailOverlay
+                                    username=user
+                                    points=pts
+                                    active=true
+                                    theme=toolbar_theme_pointer.clone()
+                                />
+                            }
+                        }).collect_view()
+                    }}
+
+                    // Attention ping animations
+                    {move || {
+                        attention_pings.get().iter().map(|ping| {
+                            let cam_x = vm.camera_x.get();
+                            let cam_y = vm.camera_y.get();
+                            let zoom = vm.zoom.get();
+                            let vw = vm.viewport_width.get();
+                            let vh = vm.viewport_height.get();
+                            let (sx, sy) = world_to_screen(
+                                ping.position.x, ping.position.y, vw, vh, cam_x, cam_y, zoom
+                            );
+                            view! {
+                                <AttentionPingAnimation
+                                    screen_x=sx
+                                    screen_y=sy
+                                    username=ping.username.clone()
+                                    theme=toolbar_theme_ping.clone()
+                                />
+                            }
+                        }).collect_view()
+                    }}
+
+                    // Board toolbar (above workspace hint)
+                    <BoardToolbar
+                        active_tool=vm.active_tool
+                        theme=toolbar_theme_main.clone()
+                    />
 
                     <Show when=move || show_workspace_hint.get()>
                         <WorkspaceHintCard

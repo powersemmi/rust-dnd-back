@@ -1,6 +1,6 @@
 use crate::components::websocket::WsSender;
 use leptos::prelude::*;
-use shared::events::{ChatMessagePayload, ClientEvent, FileRef};
+use shared::events::{ChatMessagePayload, ClientEvent, DirectMessagePayload, FileRef};
 
 /// Reactive state and logic for the chat window.
 #[derive(Clone, Copy)]
@@ -50,7 +50,26 @@ impl ChatViewModel {
         self.error_message.set(None);
     }
 
+    /// Parses `@nick message` syntax from the draft text.
+    /// Returns `Some(("nick", "message body"))` if the text starts with `@nick`.
+    pub fn parse_direct_message(text: &str) -> Option<(&str, &str)> {
+        let text = text.trim();
+        if !text.starts_with('@') {
+            return None;
+        }
+        // "@nick rest of message" – split at first whitespace after the nick.
+        let rest = &text[1..];
+        let mut parts = rest.splitn(2, |c: char| c.is_whitespace());
+        let nick = parts.next().filter(|n| !n.is_empty())?;
+        let body = parts.next().map(|s| s.trim()).unwrap_or("").trim();
+        if body.is_empty() {
+            return None;
+        }
+        Some((nick, body))
+    }
+
     /// Sends the current message via WebSocket if non-empty.
+    /// If the text matches `@nick message`, it is sent as a `DirectMessage` instead.
     /// Returns `true` if a message was sent.
     pub fn send_message(&self, username: &str, ws_sender: ReadSignal<Option<WsSender>>) -> bool {
         let Some(sender) = ws_sender.get_untracked() else {
@@ -62,10 +81,33 @@ impl ChatViewModel {
             return false;
         }
 
-        let text = self.input_text.get_untracked().trim().to_string();
+        let text = self.input_text.get_untracked();
+        let trimmed = text.trim().to_string();
+
+        // Route "@nick message" as a DirectMessage.
+        if let Some((recipient, body)) = Self::parse_direct_message(&trimmed) {
+            let now = js_sys::Date::now();
+            let dm = DirectMessagePayload {
+                from: username.to_string(),
+                to: recipient.to_string(),
+                body: body.to_string(),
+                sent_at_ms: now,
+            };
+            match sender.try_send_event(ClientEvent::DirectMessage(dm)) {
+                Ok(()) => {
+                    self.clear_draft();
+                    return true;
+                }
+                Err(error) => {
+                    self.error_message.set(Some(error));
+                    return false;
+                }
+            }
+        }
+
         let attachments = self.pending_attachments.get_untracked();
         let msg = ChatMessagePayload {
-            payload: text,
+            payload: trimmed,
             username: username.to_string(),
             attachments,
         };
@@ -120,6 +162,43 @@ mod tests {
             });
             assert!(vm.can_send());
         });
+    }
+
+    // --- Direct-message parsing tests ---
+
+    #[test]
+    fn parse_direct_message_basic() {
+        let result = ChatViewModel::parse_direct_message("@Alice hello there");
+        assert_eq!(result, Some(("Alice", "hello there")));
+    }
+
+    #[test]
+    fn parse_direct_message_with_leading_spaces() {
+        let result = ChatViewModel::parse_direct_message("  @Bob   how are you  ");
+        assert_eq!(result, Some(("Bob", "how are you")));
+    }
+
+    #[test]
+    fn parse_direct_message_no_at() {
+        assert_eq!(ChatViewModel::parse_direct_message("hello there"), None);
+    }
+
+    #[test]
+    fn parse_direct_message_no_body() {
+        // "@nick" with no body → None.
+        assert_eq!(ChatViewModel::parse_direct_message("@alice"), None);
+    }
+
+    #[test]
+    fn parse_direct_message_empty_body_after_nick() {
+        // "@alice   " → None (body is whitespace only).
+        assert_eq!(ChatViewModel::parse_direct_message("@alice   "), None);
+    }
+
+    #[test]
+    fn parse_direct_message_at_without_nick() {
+        // "@ message" → nick is empty → None.
+        assert_eq!(ChatViewModel::parse_direct_message("@ message"), None);
     }
 
     #[test]

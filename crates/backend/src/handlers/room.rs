@@ -97,6 +97,7 @@ fn is_plaintext_legacy_event(event: &ClientEvent) -> bool {
             | ClientEvent::FileChunk(_)
             | ClientEvent::FileAbort(_)
             | ClientEvent::SyncSnapshot(_)
+            | ClientEvent::DirectMessage(_)
     )
 }
 

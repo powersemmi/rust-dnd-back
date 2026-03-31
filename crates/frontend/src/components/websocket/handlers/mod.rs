@@ -8,12 +8,15 @@ mod sync;
 pub mod sync_discard;
 mod voting;
 
+use leptos::task::spawn_local;
+
 use crate::components::statistics::StateEvent;
 use crate::components::voting::VotingState;
 use crate::components::websocket::{FileTransferState, SnapshotCodec, WsSender, types::*};
 use leptos::prelude::*;
 use shared::events::{
-    ChatMessagePayload, ClientEvent, NotePayload, RoomState, Scene, VotingResultPayload,
+    AttentionPingPayload, ChatMessagePayload, ClientEvent, DirectMessagePayload, NotePayload,
+    RoomState, Scene, VotingResultPayload,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -51,6 +54,12 @@ pub struct HandlerContext<'a> {
     pub is_collecting_snapshots: &'a Rc<RefCell<bool>>,
     pub collected_announces: &'a Rc<RefCell<Vec<shared::events::SyncVersionPayload>>>,
     pub is_collecting_announces: &'a Rc<RefCell<bool>>,
+    /// Per-user board pointer state (username -> latest pointer payload).
+    pub board_pointers: RwSignal<std::collections::HashSet<String>>,
+    /// Queued attention pings waiting to be animated.
+    pub attention_pings: RwSignal<Vec<AttentionPingPayload>>,
+    /// Received direct messages (to == my_username).
+    pub direct_messages: RwSignal<Vec<DirectMessagePayload>>,
 }
 
 pub fn handle_event(event: ClientEvent, ctx: &HandlerContext<'_>) {
@@ -145,6 +154,40 @@ pub fn handle_event(event: ClientEvent, ctx: &HandlerContext<'_>) {
             ctx.local_version,
             ctx.state_events,
         ),
+        ClientEvent::BoardPointer(payload) => {
+            if payload.username != ctx.my_username {
+                ctx.board_pointers.update(|set| {
+                    if payload.active {
+                        set.insert(payload.username.clone());
+                    } else {
+                        set.remove(&payload.username);
+                    }
+                });
+            }
+        }
+        ClientEvent::AttentionPing(payload) => {
+            let pings_signal = ctx.attention_pings;
+            ctx.attention_pings.update(|pings| {
+                pings.push(payload);
+            });
+            // Remove the oldest ping after the CSS animation completes
+            // (3 iterations × 1 s = 3 s, plus a short grace margin → 3.5 s).
+            spawn_local(async move {
+                gloo_timers::future::TimeoutFuture::new(3_500).await;
+                pings_signal.update(|pings| {
+                    if !pings.is_empty() {
+                        pings.remove(0);
+                    }
+                });
+            });
+        }
+        ClientEvent::DirectMessage(payload) => {
+            if payload.to == ctx.my_username {
+                ctx.direct_messages.update(|msgs| {
+                    msgs.push(payload);
+                });
+            }
+        }
         _ => {}
     }
 }

@@ -154,7 +154,10 @@ impl WsSender {
             | ClientEvent::PresenceResponse(_)
             | ClientEvent::PresenceAnnounce(_)
             | ClientEvent::CryptoKeyAnnounce(_)
-            | ClientEvent::CryptoKeyWrap(_) => OutboundPriority::Normal,
+            | ClientEvent::CryptoKeyWrap(_)
+            | ClientEvent::BoardPointer(_)
+            | ClientEvent::AttentionPing(_)
+            | ClientEvent::DirectMessage(_) => OutboundPriority::Normal,
         }
     }
 }
@@ -184,6 +187,9 @@ pub struct ConnectWebSocketArgs {
     pub chat_notification_count: RwSignal<u32>,
     pub config: config::Config,
     pub conflict_resolution_handle: ConflictResolutionHandle,
+    pub board_pointers: RwSignal<std::collections::HashSet<String>>,
+    pub attention_pings: RwSignal<Vec<shared::events::AttentionPingPayload>>,
+    pub direct_messages: RwSignal<Vec<shared::events::DirectMessagePayload>>,
 }
 
 struct MessageProcessingContext {
@@ -218,6 +224,9 @@ struct MessageProcessingContext {
     is_collecting_snapshots: Rc<RefCell<bool>>,
     collected_announces: Rc<RefCell<Vec<shared::events::SyncVersionPayload>>>,
     is_collecting_announces: Rc<RefCell<bool>>,
+    board_pointers: RwSignal<std::collections::HashSet<String>>,
+    attention_pings: RwSignal<Vec<shared::events::AttentionPingPayload>>,
+    direct_messages: RwSignal<Vec<shared::events::DirectMessagePayload>>,
 }
 
 impl MessageProcessingContext {
@@ -255,6 +264,9 @@ impl MessageProcessingContext {
             is_collecting_snapshots: &self.is_collecting_snapshots,
             collected_announces: &self.collected_announces,
             is_collecting_announces: &self.is_collecting_announces,
+            board_pointers: self.board_pointers,
+            attention_pings: self.attention_pings,
+            direct_messages: self.direct_messages,
         }
     }
 }
@@ -285,6 +297,9 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
         chat_notification_count,
         config,
         conflict_resolution_handle,
+        board_pointers,
+        attention_pings,
+        direct_messages,
     } = args;
 
     // Инициализация состояния
@@ -458,6 +473,9 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
                         is_collecting_snapshots,
                         collected_announces,
                         is_collecting_announces,
+                        board_pointers,
+                        attention_pings,
+                        direct_messages,
                     },
                 )
                 .await;
@@ -688,7 +706,16 @@ async fn process_messages(
                             match outbound {
                                 Ok(events) => {
                                     for event in events {
-                                        let _ = context.tx.try_send_event(event);
+                                        // Send key-wrap responses on High priority so they
+                                        // arrive at the newcomer before any encrypted snapshot
+                                        // that is also queued on High priority.  The outbound
+                                        // scheduler drains High before Normal, so without this
+                                        // the snapshot could win the race and land before the
+                                        // wrap even though the wrap was enqueued first.
+                                        let _ = context.tx.try_send_event_with_priority(
+                                            event,
+                                            OutboundPriority::High,
+                                        );
                                     }
                                 }
                                 Err(error) => {

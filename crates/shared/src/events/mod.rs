@@ -1,3 +1,4 @@
+pub mod board;
 pub mod chat;
 pub mod crypto;
 pub mod file;
@@ -9,6 +10,9 @@ pub mod scene;
 pub mod sync;
 pub mod voting;
 
+pub use crate::events::board::{
+    AttentionPingPayload, BoardPointerPayload, DirectMessagePayload, WorldPoint,
+};
 pub use crate::events::chat::ChatMessagePayload;
 pub use crate::events::crypto::{
     CryptoKeyAnnouncePayload, CryptoKeyWrapPayload, CryptoPayload, EncryptedPayloadKind,
@@ -108,6 +112,14 @@ pub enum ClientEvent {
     #[serde(rename = "CRYPTO_PAYLOAD")]
     CryptoPayload(CryptoPayload),
 
+    /// Board tool events
+    #[serde(rename = "BOARD_POINTER")]
+    BoardPointer(BoardPointerPayload),
+    #[serde(rename = "ATTENTION_PING")]
+    AttentionPing(AttentionPingPayload),
+    #[serde(rename = "DIRECT_MESSAGE")]
+    DirectMessage(DirectMessagePayload),
+
     #[serde(rename = "PING")]
     Ping,
 }
@@ -145,6 +157,9 @@ impl ClientEvent {
             ClientEvent::CryptoPayload(p) => p.validate(),
             ClientEvent::SyncRequest => Ok(()),
             ClientEvent::Ping => Ok(()),
+            ClientEvent::BoardPointer(p) => p.validate(),
+            ClientEvent::AttentionPing(p) => p.validate(),
+            ClientEvent::DirectMessage(p) => p.validate(),
         }
     }
 }

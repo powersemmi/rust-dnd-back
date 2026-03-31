@@ -14,6 +14,7 @@ pub struct WindowSize {
 }
 
 impl WindowSize {
+    #[allow(dead_code)] // used in tests only
     pub fn clamp(&self, min_width: i32, min_height: i32) -> Self {
         Self {
             width: self.width.max(min_width),

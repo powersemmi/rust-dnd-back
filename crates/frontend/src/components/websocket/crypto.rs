@@ -305,7 +305,9 @@ impl RoomCryptoState {
 
     fn kind_for_event(event: &ClientEvent) -> Option<EncryptedPayloadKind> {
         match event {
-            ClientEvent::ChatMessage(_) => Some(EncryptedPayloadKind::Chat),
+            ClientEvent::ChatMessage(_) | ClientEvent::DirectMessage(_) => {
+                Some(EncryptedPayloadKind::Chat)
+            }
             ClientEvent::NoteUpsert(_) | ClientEvent::NoteDelete(_) => {
                 Some(EncryptedPayloadKind::Note)
             }

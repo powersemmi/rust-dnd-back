@@ -1,6 +1,43 @@
 // Pure geometric types and constants for the scene board.
 // No signals, no Leptos, no web_sys.
 
+// --- Board tools ---
+
+/// The active board tool selected by the local user.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum BoardTool {
+    #[default]
+    None,
+    /// Ruler: user clicks two points within a scene to measure DnD distance.
+    Ruler,
+    /// Miro-style pointer: user's cursor leaves a fading trail visible to others.
+    Pointer,
+}
+
+/// Calculates the DnD ruler distance between two world-coordinate points within a scene.
+///
+/// Returns `(distance_cells, distance_feet)` where:
+/// - `distance_cells` is the Euclidean distance in grid cells (using DnD diagonal rules:
+///   diagonal counts as 1 square, not √2, matching standard DnD 5e).
+/// - `distance_feet` is `distance_cells * cell_size_feet`.
+///
+/// DnD 5e diagonal rule: every other diagonal costs 1.5 squares (round down per move).
+/// For simplicity we use the "every diagonal = 1 square" optional rule (flat grid distance).
+pub fn ruler_distance(
+    start_world_x: f64,
+    start_world_y: f64,
+    end_world_x: f64,
+    end_world_y: f64,
+    cell_size_feet: u16,
+) -> (f64, f64) {
+    let dx = (end_world_x - start_world_x).abs();
+    let dy = (end_world_y - start_world_y).abs();
+    // Chebyshev distance (Dnd "every diagonal = 1 square" variant).
+    let cells = dx.max(dy);
+    let feet = cells * f64::from(cell_size_feet);
+    (cells, feet)
+}
+
 // --- Constants ---
 
 pub const MIN_ZOOM: f64 = 0.35;

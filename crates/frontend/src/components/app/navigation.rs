@@ -7,8 +7,11 @@ use crate::components::websocket::{
 use crate::config;
 use crate::utils::{auth, token_refresh};
 use leptos::prelude::*;
-use shared::events::{ChatMessagePayload, NotePayload, Scene, voting::VotingResultPayload};
-use std::collections::HashMap;
+use shared::events::{
+    AttentionPingPayload, ChatMessagePayload, DirectMessagePayload, NotePayload, Scene,
+    voting::VotingResultPayload,
+};
+use std::collections::{HashMap, HashSet};
 
 use super::AppState;
 
@@ -80,6 +83,9 @@ pub struct RoomSelectedCallbackArgs {
     pub chat_notification_count: RwSignal<u32>,
     pub cfg: StoredValue<config::Config>,
     pub conflict_resolution_handle: ConflictResolutionHandle,
+    pub board_pointers: RwSignal<HashSet<String>>,
+    pub attention_pings: RwSignal<Vec<AttentionPingPayload>>,
+    pub direct_messages: RwSignal<Vec<DirectMessagePayload>>,
 }
 
 /// Создает callback для выбора комнаты и подключения к WebSocket
@@ -110,6 +116,9 @@ pub fn create_room_selected_callback(args: RoomSelectedCallbackArgs) -> impl Fn(
         chat_notification_count,
         cfg,
         conflict_resolution_handle,
+        board_pointers,
+        attention_pings,
+        direct_messages,
     } = args;
     let handle_clone = conflict_resolution_handle.clone();
     move |selected_room_id: String| {
@@ -144,6 +153,9 @@ pub fn create_room_selected_callback(args: RoomSelectedCallbackArgs) -> impl Fn(
             chat_notification_count,
             config: cfg.get_value(),
             conflict_resolution_handle: handle_clone.clone(),
+            board_pointers,
+            attention_pings,
+            direct_messages,
         });
     }
 }

@@ -38,6 +38,7 @@ const FIT_PREVIEW_VERTICAL_CHROME_PX: f64 = 140.0;
 pub enum SceneValidationError {
     EmptyName,
     InvalidGrid,
+    #[allow(dead_code)] // reserved for when MAX_SCENES_PER_ROOM check moves to frontend
     LimitReached,
 }
 

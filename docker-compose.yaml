@@ -35,6 +35,8 @@ services:
       - REDIS_URL=redis://redis:6379
       - DATABASE_URL=postgres://user:password@postgres:5432/dnd_db
       - RUST_LOG=debug
+      # Frontend is served by nginx on port 8080; allow its origin for CORS.
+      - ALLOWED_ORIGIN=http://127.0.0.1:8080
     ports:
       - "3000:3000"
     networks:

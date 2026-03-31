@@ -1,3 +1,4 @@
+use super::model::BoardTool;
 use leptos::prelude::*;
 
 /// Reactive state for the scene board's camera, panning, and drag interactions.
@@ -12,6 +13,8 @@ pub struct SceneBoardViewModel {
 
     // Pan state
     pub is_panning: RwSignal<bool>,
+    /// Space-bar state; reserved for future space+drag camera panning.
+    #[allow(dead_code)]
     pub is_space_pressed: RwSignal<bool>,
     pan_start_local_x: RwSignal<f64>,
     pan_start_local_y: RwSignal<f64>,
@@ -36,6 +39,17 @@ pub struct SceneBoardViewModel {
 
     pub pointer_local_x: RwSignal<f64>,
     pub pointer_local_y: RwSignal<f64>,
+
+    // Board tools
+    pub active_tool: RwSignal<BoardTool>,
+    /// Ruler first anchor in world coordinates, set on first click.
+    pub ruler_start: RwSignal<Option<(f64, f64)>>,
+    /// Ruler second anchor in world coordinates, set on second click.
+    pub ruler_end: RwSignal<Option<(f64, f64)>>,
+    /// Whether the local pointer tool is currently broadcasting.
+    /// Derived from `active_tool`; kept as a signal for external observers.
+    #[allow(dead_code)]
+    pub pointer_active: RwSignal<bool>,
 
     // Selection box
     pub is_selecting: RwSignal<bool>,
@@ -79,6 +93,10 @@ impl SceneBoardViewModel {
             token_drag_origin_y: RwSignal::new(0.0),
             pointer_local_x: RwSignal::new(0.0),
             pointer_local_y: RwSignal::new(0.0),
+            active_tool: RwSignal::new(BoardTool::None),
+            ruler_start: RwSignal::new(None),
+            ruler_end: RwSignal::new(None),
+            pointer_active: RwSignal::new(false),
             is_selecting: RwSignal::new(false),
             selection_start_x: RwSignal::new(0.0),
             selection_start_y: RwSignal::new(0.0),

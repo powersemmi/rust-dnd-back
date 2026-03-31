@@ -30,8 +30,10 @@ use crate::utils::{auth, token_refresh};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos::wasm_bindgen::JsCast;
-use shared::events::{ChatMessagePayload, NotePayload, Scene};
-use std::collections::HashMap;
+use shared::events::{
+    AttentionPingPayload, ChatMessagePayload, DirectMessagePayload, NotePayload, Scene,
+};
+use std::collections::{HashMap, HashSet};
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -87,6 +89,9 @@ pub fn App() -> impl IntoView {
     let (ws_sender, set_ws_sender) = signal::<Option<WsSender>>(None);
     let file_transfer = FileTransferState::new();
     let conflict_resolution_handle = ConflictResolutionHandle::new();
+    let board_pointers = RwSignal::new(HashSet::<String>::new());
+    let attention_pings = RwSignal::new(Vec::<AttentionPingPayload>::new());
+    let direct_messages = RwSignal::new(Vec::<DirectMessagePayload>::new());
 
     let clear_room_local_state = {
         let handle = conflict_resolution_handle.clone();
@@ -168,6 +173,9 @@ pub fn App() -> impl IntoView {
             chat_notification_count: vm.chat_notification_count,
             cfg,
             conflict_resolution_handle: conflict_resolution_handle.clone(),
+            board_pointers,
+            attention_pings,
+            direct_messages,
         },
     ));
 
@@ -328,6 +336,9 @@ pub fn App() -> impl IntoView {
                                 username=username
                                 config=cfg.get_value()
                                 theme=theme.get_value()
+                                board_pointers=board_pointers
+                                attention_pings=attention_pings
+                                direct_messages=direct_messages
                             />
 
                             <h3 style="color: #aaa; position: absolute; top: 10px; right: 10px; z-index: 100;">

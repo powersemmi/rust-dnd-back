@@ -1,3 +1,4 @@
+mod background_fit_editor;
 pub mod model;
 mod view;
 pub mod view_model;

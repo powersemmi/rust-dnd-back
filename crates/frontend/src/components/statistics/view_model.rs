@@ -14,10 +14,7 @@ impl StatisticsViewModel {
         }
     }
 
-    pub fn switch_to_voting_results(&self) {
-        self.active_tab.set(StatisticsTab::VotingResults);
-    }
-
+    #[allow(dead_code)] // used in tests; may be wired to UI later
     pub fn switch_to_event_log(&self) {
         self.active_tab.set(StatisticsTab::EventLog);
     }

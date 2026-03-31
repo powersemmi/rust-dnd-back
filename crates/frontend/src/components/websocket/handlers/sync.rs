@@ -115,7 +115,40 @@ pub fn handle_sync_announce(payload: SyncVersionPayload, ctx: &HandlerContext<'_
             );
             "DESCENDANT"
         } else {
-            // Удалённая версия новее, но не содержит нашу версию - это форк
+            // Удалённая версия новее, но не содержит нашу версию - это форк.
+            // Однако если у нас нет несинхронизированных локальных изменений
+            // (local_ver == last_synced_ver), значит наш стейт пришёл из IndexedDB и
+            // мы просто отстали - разумнее принять удалённую версию без конфликта.
+            let local_synced = *ctx.last_synced_version.borrow();
+            let has_unsynced_local_changes = my_ver > local_synced;
+
+            if !has_unsynced_local_changes {
+                log!(
+                    "FORK with {} (v{}) but no local unsynced changes (v{} = last_synced {}). \
+                     Treating as resync candidate.",
+                    payload.username,
+                    payload.version,
+                    my_ver,
+                    local_synced,
+                );
+                // Treat like a newcomer — just add to sync candidates so we pull the
+                // remote state instead of surfacing a conflict dialog.
+                drop(state);
+                ctx.sync_candidates
+                    .borrow_mut()
+                    .push((payload.username.clone(), payload.version));
+                utils::log_event(
+                    ctx.state_events,
+                    my_ver,
+                    "SYNC_VERSION_ANNOUNCE",
+                    &format!(
+                        "{} announced v{} (fork+no-local-changes → resync)",
+                        payload.username, payload.version
+                    ),
+                );
+                return;
+            }
+
             log::warn!(
                 "FORK detected with {}: they are at v{}, we are at v{}, but no common lineage",
                 payload.username,
@@ -368,11 +401,16 @@ pub fn handle_snapshot(payload: SyncSnapshotPayload, ctx: &HandlerContext<'_>) {
         );
 
         // Отправляем SyncVersionAnnounce чтобы другие пользователи знали что конфликт разрешен
+        let recent_hashes: Vec<String> = decoded_state
+            .history_log
+            .iter()
+            .map(|(_, hash)| hash.clone())
+            .collect();
         let announce = ClientEvent::SyncVersionAnnounce(shared::events::SyncVersionPayload {
-            username: String::new(), // Будет заполнено сервером
+            username: ctx.my_username.to_string(),
             version: remote_ver,
             state_hash: decoded_state.current_hash.clone(),
-            recent_hashes: vec![],
+            recent_hashes,
         });
         if ctx.tx.try_send_event(announce).is_ok() {
             log!("📢 Sent SyncVersionAnnounce after discard");
@@ -391,6 +429,45 @@ pub fn handle_snapshot(payload: SyncSnapshotPayload, ctx: &HandlerContext<'_>) {
         &decoded_state,
     ) {
         Err(conflict) => {
+            // Особый случай: у нас нет несинхронизированных изменений (local_ver ==
+            // last_synced_ver) — это значит, что наш стейт из IndexedDB, мы просто
+            // отстали. Принимаем снапшот без диалога конфликта.
+            let has_unsynced = local_ver > local_synced;
+            if !has_unsynced && remote_ver > local_ver {
+                log!(
+                    "🔄 Conflict ({:?}) but no local unsynced changes — accepting remote v{}",
+                    conflict.conflict_type,
+                    remote_ver
+                );
+
+                *ctx.local_version.borrow_mut() = remote_ver;
+                *ctx.last_synced_version.borrow_mut() = remote_ver;
+                *ctx.room_state.borrow_mut() = decoded_state.clone();
+
+                ctx.messages_signal.set(decoded_state.chat_history.clone());
+                ctx.public_notes_signal
+                    .set(decoded_state.public_notes.clone());
+                ctx.file_transfer
+                    .reconcile_chat_attachments(&decoded_state.chat_history);
+                ctx.voting_results.set(decoded_state.voting_results.clone());
+                ctx.scenes_signal.set(decoded_state.scenes.clone());
+                ctx.active_scene_id_signal
+                    .set(decoded_state.active_scene_id.clone());
+                storage::save_state_in_background(ctx.room_name, &decoded_state);
+                ctx.conflict_signal.set(None);
+
+                utils::log_event(
+                    ctx.state_events,
+                    remote_ver,
+                    "RESYNC_SNAPSHOT_ACCEPTED",
+                    &format!(
+                        "Accepted remote v{} after fork (no local changes)",
+                        remote_ver
+                    ),
+                );
+                return;
+            }
+
             ctx.conflict_signal.set(Some(conflict.clone()));
             utils::log_event(
                 ctx.state_events,
