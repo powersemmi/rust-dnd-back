@@ -442,8 +442,27 @@ pub fn ChatWindow(
         Callback::new(move |()| {
             let attachments = vm.pending_attachments.get_untracked();
             let current_username = username.get_untracked();
+            // Capture draft text BEFORE send_message clears it so we can show
+            // a local-only DM echo in the chat if the message was a DM.
+            let draft_text = vm.input_text.get_untracked();
             let sent = vm.send_message(&current_username, ws_sender);
             if sent {
+                // If the sent message was a DM, insert a local display entry so
+                // the sender gets immediate visual feedback.  DMs are not stored
+                // in room state and will vanish on the next snapshot; that is an
+                // acceptable trade-off for a session-scoped feature.
+                let trimmed_draft = draft_text.trim().to_string();
+                if let Some((recipient, body)) =
+                    ChatViewModel::parse_direct_message(&trimmed_draft)
+                {
+                    let dm_display = ChatMessagePayload {
+                        payload: format!("[DM → @{}]: {}", recipient, body),
+                        username: current_username.clone(),
+                        attachments: vec![],
+                    };
+                    messages.update(|msgs| msgs.push(dm_display));
+                }
+
                 file_transfer.announce_local_files(
                     &attachments,
                     current_username,

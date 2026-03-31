@@ -318,6 +318,24 @@ pub fn App() -> impl IntoView {
                     }.into_any(),
                     AppState::Connected => view! {
                         <div style="width: 100%; height: 100%; position: relative;">
+                            // Баннер отключения: показывается когда WS упал, но мы ещё
+                            // в комнате и ждём переподключения.
+                            <Show when=move || ws_sender.get().is_none()>
+                                <div style=format!(
+                                    "position: fixed; top: 0; left: 0; right: 0; z-index: 9999; \
+                                     padding: 0.65rem 1rem; background: {}; color: {}; \
+                                     font-size: 0.9rem; font-weight: 600; text-align: center; \
+                                     display: flex; align-items: center; justify-content: center; \
+                                     gap: 0.75rem; box-shadow: 0 2px 12px rgba(0,0,0,0.35);",
+                                    theme.get_value().ui_button_danger,
+                                    theme.get_value().ui_text_primary,
+                                )>
+                                    <span style="display: inline-block; width: 0.7rem; height: 0.7rem; \
+                                                 border-radius: 50%; background: currentColor; \
+                                                 animation: ping 1s ease-out infinite; opacity: 0.85;" />
+                                    "Соединение потеряно. Переподключение…"
+                                </div>
+                            </Show>
                             <SceneBoard
                                 room_id=room_id
                                 scenes=scenes

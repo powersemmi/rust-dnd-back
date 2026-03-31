@@ -325,8 +325,9 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
     // Построение WebSocket URL
     let ws_url = build_ws_url(&config, &room_name, &jwt_token);
 
-    // Подключение
+    // Подключение и автоматическое переподключение с exponential backoff.
     spawn_local(async move {
+        // Загружаем кэшированный стейт из IndexedDB один раз при первом запуске.
         match storage::load_state(&room_name_for_storage).await {
             Ok(Some(data)) => {
                 log!("Loaded state from IndexedDB: v{}", data.state.version);
@@ -348,6 +349,26 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
             Err(error) => log!("Failed to load state from IndexedDB: {}", error),
         }
 
+        // Backoff: 1 s → 2 s → 4 s → … → 30 s max.
+        let mut backoff_ms: u32 = 1_000;
+
+        loop {
+        // Клонируем Rc/Arc/String для использования в этой итерации;
+        // "мастера" остаются в замыкании для следующих итераций.
+        // Rc::clone создаёт новый указатель на те же данные — не копирование.
+        let room_state_it = room_state.clone();
+        let local_version_it = local_version.clone();
+        let last_synced_version_it = last_synced_version.clone();
+        let expected_snapshot_from_it = expected_snapshot_from.clone();
+        let collected_snapshots_it = collected_snapshots.clone();
+        let is_collecting_snapshots_it = is_collecting_snapshots.clone();
+        let collected_announces_it = collected_announces.clone();
+        let is_collecting_announces_it = is_collecting_announces.clone();
+        let file_transfer_it = file_transfer.clone();
+        let my_username_it = my_username_clone.clone();
+        let room_name_it = room_name_clone.clone();
+        let my_username_for_crypto_it = my_username_for_crypto.clone();
+
         match GlooWebSocket::open(&ws_url) {
             Ok(ws) => {
                 let (write, read) = ws.split();
@@ -359,19 +380,21 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
                     futures::channel::mpsc::channel::<Message>(LOW_PRIORITY_QUEUE_CAPACITY);
                 let crypto_state = Arc::new(Mutex::new(RoomCryptoState::new(
                     &room_name,
-                    &my_username_for_crypto,
+                    &my_username_for_crypto_it,
                 )));
                 let tx = WsSender::new(high_tx, normal_tx, low_tx, crypto_state);
                 set_ws_sender.set(Some(tx.clone()));
 
-                // Устанавливаем callback для разрешения конфликта
+                // Устанавливаем callback для разрешения конфликта.
+                // Использует клоны этой итерации, чтобы callback всегда работал
+                // через актуальный tx даже после переподключения.
                 let tx_for_callback = tx.clone();
-                let collected_announces_cb = collected_announces.clone();
-                let is_collecting_announces_cb = is_collecting_announces.clone();
-                let expected_snapshot_from_cb = expected_snapshot_from.clone();
-                let room_state_for_callback = room_state.clone();
-                let local_version_for_callback = local_version.clone();
-                let last_synced_version_for_callback = last_synced_version.clone();
+                let collected_announces_cb = collected_announces_it.clone();
+                let is_collecting_announces_cb = is_collecting_announces_it.clone();
+                let expected_snapshot_from_cb = expected_snapshot_from_it.clone();
+                let room_state_for_callback = room_state_it.clone();
+                let local_version_for_callback = local_version_it.clone();
+                let last_synced_version_for_callback = last_synced_version_it.clone();
                 let messages_signal_for_callback = messages_signal;
                 let public_notes_signal_for_callback = public_notes_signal;
                 let scenes_signal_for_callback = scenes_signal;
@@ -380,7 +403,7 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
                 let conflict_signal_for_callback = conflict_signal;
                 let state_events_for_callback = state_events;
                 let room_name_for_callback = room_name.clone();
-                let file_transfer_for_callback = file_transfer.clone();
+                let file_transfer_for_callback = file_transfer_it.clone();
 
                 conflict_resolution_handle.set_callback(move || {
                     use crate::components::websocket::handlers::sync_discard;
@@ -431,8 +454,8 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
                 // Таймер выбора донора для синхронизации
                 start_sync_timer(
                     sync_candidates.clone(),
-                    local_version.clone(),
-                    my_username_clone.clone(),
+                    local_version_it.clone(),
+                    my_username_it.clone(),
                     tx.clone(),
                 );
 
@@ -448,13 +471,13 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
                     MessageProcessingContext {
                         tx,
                         snapshot_codec: snapshot_codec.clone(),
-                        file_transfer,
-                        room_state,
-                        local_version,
-                        last_synced_version,
+                        file_transfer: file_transfer_it,
+                        room_state: room_state_it,
+                        local_version: local_version_it,
+                        last_synced_version: last_synced_version_it,
                         sync_candidates,
-                        my_username: my_username_clone,
-                        room_name: room_name_clone,
+                        my_username: my_username_it,
+                        room_name: room_name_it,
                         set_cursors,
                         messages_signal,
                         public_notes_signal,
@@ -472,20 +495,38 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
                         notification_count,
                         has_chat_notification,
                         chat_notification_count,
-                        expected_snapshot_from,
-                        collected_snapshots,
-                        is_collecting_snapshots,
-                        collected_announces,
-                        is_collecting_announces,
+                        expected_snapshot_from: expected_snapshot_from_it,
+                        collected_snapshots: collected_snapshots_it,
+                        is_collecting_snapshots: is_collecting_snapshots_it,
+                        collected_announces: collected_announces_it,
+                        is_collecting_announces: is_collecting_announces_it,
                         board_pointers,
                         attention_pings,
                         direct_messages,
                     },
                 )
                 .await;
+
+                // WebSocket закрылся — сигнализируем UI об отключении.
+                set_ws_sender.set(None);
+                // После успешной сессии сбрасываем задержку до минимума.
+                backoff_ms = 1_000;
             }
             Err(e) => log!("WebSocket open error: {:?}", e),
         }
+
+        // Сбрасываем транзиентное состояние синхронизации перед следующей попыткой,
+        // чтобы не унаследовать устаревшие флаги от предыдущей сессии.
+        *is_collecting_announces.borrow_mut() = false;
+        *is_collecting_snapshots.borrow_mut() = false;
+        *expected_snapshot_from.borrow_mut() = None;
+        collected_announces.borrow_mut().clear();
+        collected_snapshots.borrow_mut().clear();
+
+        log!("WebSocket disconnected. Reconnecting in {} ms…", backoff_ms);
+        TimeoutFuture::new(backoff_ms).await;
+        backoff_ms = (backoff_ms * 2).min(30_000);
+        } // end reconnect loop
     });
 }
 

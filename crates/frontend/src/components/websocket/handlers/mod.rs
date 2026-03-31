@@ -183,6 +183,15 @@ pub fn handle_event(event: ClientEvent, ctx: &HandlerContext<'_>) {
         }
         ClientEvent::DirectMessage(payload) => {
             if payload.to == ctx.my_username {
+                // Show received DM in the chat view with a visual DM marker so the
+                // recipient gets immediate feedback.  DMs are not persisted in room
+                // state and will be cleared on the next snapshot; that is acceptable.
+                let display = ChatMessagePayload {
+                    payload: format!("[DM from @{}]: {}", payload.from, payload.body),
+                    username: payload.from.clone(),
+                    attachments: vec![],
+                };
+                ctx.messages_signal.update(|msgs| msgs.push(display));
                 ctx.direct_messages.update(|msgs| {
                     msgs.push(payload);
                 });
