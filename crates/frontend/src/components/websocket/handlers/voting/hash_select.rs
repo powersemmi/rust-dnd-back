@@ -52,7 +52,11 @@ pub fn handle_hash_selection_voting_result(payload: VotingResultPayload, ctx: &H
                 ctx.public_notes_signal
                     .set(chosen_state.public_notes.clone());
                 ctx.file_transfer
-                    .reconcile_chat_attachments(&chosen_state.chat_history);
+                    .reconcile_chat_attachments(
+                        &chosen_state.chat_history,
+                        ctx.my_username.to_string(),
+                        Some(ctx.tx.clone()),
+                    );
                 ctx.scenes_signal.set(chosen_state.scenes.clone());
                 ctx.active_scene_id_signal
                     .set(chosen_state.active_scene_id.clone());

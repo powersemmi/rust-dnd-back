@@ -365,7 +365,11 @@ pub fn ChatWindow(
         let file_transfer = file_transfer.clone();
         Effect::new(move || {
             let current_messages = messages.get();
-            file_transfer.reconcile_chat_attachments(&current_messages);
+            file_transfer.reconcile_chat_attachments(
+                &current_messages,
+                username.get_untracked(),
+                ws_sender.get_untracked(),
+            );
         });
     }
 

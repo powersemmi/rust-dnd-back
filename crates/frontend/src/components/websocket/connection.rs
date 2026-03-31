@@ -335,7 +335,11 @@ pub fn connect_websocket(args: ConnectWebSocketArgs) {
                 *room_state.borrow_mut() = data.state.clone();
                 messages_signal.set(data.state.chat_history.clone());
                 public_notes_signal.set(data.state.public_notes.clone());
-                file_transfer.reconcile_chat_attachments(&data.state.chat_history);
+                file_transfer.reconcile_chat_attachments(
+                    &data.state.chat_history,
+                    my_username.clone(),
+                    None, // WS not yet connected; missing files re-requested on first sync
+                );
                 voting_results.set(data.state.voting_results.clone());
                 scenes_signal.set(data.state.scenes.clone());
                 active_scene_id_signal.set(data.state.active_scene_id.clone());

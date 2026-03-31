@@ -10,7 +10,11 @@ pub fn handle_chat_message(msg: ChatMessagePayload, ctx: &HandlerContext<'_>) {
 
     let is_from_me = msg.username == ctx.my_username;
     ctx.file_transfer
-        .reconcile_chat_attachments(std::slice::from_ref(&msg));
+        .reconcile_chat_attachments(
+            std::slice::from_ref(&msg),
+            ctx.my_username.to_string(),
+            Some(ctx.tx.clone()),
+        );
 
     if !is_from_me {
         for attachment in &msg.attachments {

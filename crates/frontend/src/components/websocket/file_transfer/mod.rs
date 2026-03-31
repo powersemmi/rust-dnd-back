@@ -285,7 +285,18 @@ impl FileTransferState {
         }
     }
 
-    pub fn reconcile_chat_attachments(&self, messages: &[ChatMessagePayload]) {
+    /// Loads chat attachment blobs from local IndexedDB and, when a file is missing,
+    /// sends a `FILE_REQUEST` to peers so the attachment can be downloaded.
+    ///
+    /// `username` and `ws_sender` may be empty/`None` when called before the WebSocket
+    /// connection is established (e.g. initial IndexedDB hydration); in that case missing
+    /// files are silently skipped and will be re-requested once the connection is open.
+    pub fn reconcile_chat_attachments(
+        &self,
+        messages: &[ChatMessagePayload],
+        username: String,
+        ws_sender: Option<WsSender>,
+    ) {
         for file in collect_chat_files(messages) {
             self.known_files
                 .borrow_mut()
@@ -307,13 +318,18 @@ impl FileTransferState {
             }
 
             let this = self.clone();
+            let username = username.clone();
+            let ws_sender = ws_sender.clone();
             spawn_local(async move {
                 match storage::load_file(&file.hash).await {
                     Ok(Some(record)) => {
                         this.ensure_file_url_from_blob(&record.file.hash, &record.blob);
                         this.set_status(&record.file.hash, FileTransferStatus::complete());
                     }
-                    Ok(None) => {}
+                    Ok(None) => {
+                        // File not in local IndexedDB — request it from a peer.
+                        this.request_file_if_needed(file, username, ws_sender);
+                    }
                     Err(error) => {
                         log!(
                             "Failed to hydrate chat attachment '{}' from IndexedDB: {}",

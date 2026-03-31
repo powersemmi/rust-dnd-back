@@ -347,7 +347,7 @@ pub fn handle_snapshot(payload: SyncSnapshotPayload, ctx: &HandlerContext<'_>) {
         ctx.public_notes_signal
             .set(decoded_state.public_notes.clone());
         ctx.file_transfer
-            .reconcile_chat_attachments(&decoded_state.chat_history);
+            .reconcile_chat_attachments(&decoded_state.chat_history, ctx.my_username.to_string(), Some(ctx.tx.clone()));
         ctx.voting_results.set(decoded_state.voting_results.clone());
         ctx.scenes_signal.set(decoded_state.scenes.clone());
         ctx.active_scene_id_signal
@@ -384,7 +384,7 @@ pub fn handle_snapshot(payload: SyncSnapshotPayload, ctx: &HandlerContext<'_>) {
         ctx.public_notes_signal
             .set(decoded_state.public_notes.clone());
         ctx.file_transfer
-            .reconcile_chat_attachments(&decoded_state.chat_history);
+            .reconcile_chat_attachments(&decoded_state.chat_history, ctx.my_username.to_string(), Some(ctx.tx.clone()));
         ctx.voting_results.set(decoded_state.voting_results.clone());
         ctx.scenes_signal.set(decoded_state.scenes.clone());
         ctx.active_scene_id_signal
@@ -448,7 +448,7 @@ pub fn handle_snapshot(payload: SyncSnapshotPayload, ctx: &HandlerContext<'_>) {
                 ctx.public_notes_signal
                     .set(decoded_state.public_notes.clone());
                 ctx.file_transfer
-                    .reconcile_chat_attachments(&decoded_state.chat_history);
+                    .reconcile_chat_attachments(&decoded_state.chat_history, ctx.my_username.to_string(), Some(ctx.tx.clone()));
                 ctx.voting_results.set(decoded_state.voting_results.clone());
                 ctx.scenes_signal.set(decoded_state.scenes.clone());
                 ctx.active_scene_id_signal
@@ -491,7 +491,7 @@ pub fn handle_snapshot(payload: SyncSnapshotPayload, ctx: &HandlerContext<'_>) {
             ctx.public_notes_signal
                 .set(decoded_state.public_notes.clone());
             ctx.file_transfer
-                .reconcile_chat_attachments(&decoded_state.chat_history);
+                .reconcile_chat_attachments(&decoded_state.chat_history, ctx.my_username.to_string(), Some(ctx.tx.clone()));
             ctx.voting_results.set(decoded_state.voting_results.clone());
             ctx.scenes_signal.set(decoded_state.scenes.clone());
             ctx.active_scene_id_signal
