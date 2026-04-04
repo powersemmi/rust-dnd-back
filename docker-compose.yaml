@@ -1,65 +1,90 @@
 services:
   redis:
     image: redis:alpine
-    ports:
-      - "6379:6379"
+    restart: unless-stopped
     security_opt:
       - no-new-privileges:true
     networks:
-      - dev-network
+      - backend-network
 
   postgres:
     image: postgres:alpine
-    ports:
-      - "5432:5432"
+    restart: unless-stopped
     volumes:
       - postgres-data:/var/lib/postgresql/data
     environment:
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=dnd_db
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
-      - dev-network
+      - backend-network
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrator
+    restart: "no"
+    env_file:
+      - .env
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend-network
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   backend:
     build:
       context: .
       dockerfile: Dockerfile
       target: backend
+    restart: unless-stopped
     env_file:
       - .env
     environment:
-      - RUST_BACKTRACE=1
+      # Override to ensure correct values regardless of .env content
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=3000
-      - REDIS_URL=redis://redis:6379
-      - DATABASE_URL=postgres://user:password@postgres:5432/dnd_db
-      - RUST_LOG=debug
-      # Frontend is served by nginx on port 8080; allow its origin for CORS.
-      - ALLOWED_ORIGIN=http://127.0.0.1:8080
+      - RUST_LOG=dnd_back=info,tower_http=info
     ports:
-      - "3000:3000"
+      # Bind to localhost only -- nginx on the host proxies to this port
+      - "127.0.0.1:3000:3000"
+    security_opt:
+      - no-new-privileges:true
     networks:
-      - dev-network
+      - backend-network
     depends_on:
-      - redis
-      - postgres
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
 
-  frontend:
+  # Build-only service: populates the frontend-static volume and exits.
+  # The host nginx mounts the underlying volume directory.
+  frontend-static:
     build:
       context: .
       dockerfile: Dockerfile
-      target: frontend
-    ports:
-      - "8080:80"
-    networks:
-      - dev-network
-    depends_on:
-      - backend
-
+      target: builder-frontend
+    restart: "no"
+    volumes:
+      - frontend-static:/app/crates/frontend/dist
 
 networks:
-  dev-network:
+  # internal: true blocks outbound internet access from containers.
+  # Port bindings to the host (backend port 3000) still work normally.
+  backend-network:
+    internal: true
 
 volumes:
   postgres-data:
+  frontend-static:

@@ -67,6 +67,13 @@ COPY --from=builder-backend /app/target/x86_64-unknown-linux-musl/release/backen
 
 CMD ["/backend"]
 
+# Migrator: installs sqlx-cli and runs pending migrations.
+# The cargo install layer is cached independently of backend/frontend code changes.
+FROM chef AS migrator
+RUN cargo install sqlx-cli --no-default-features --features postgres,rustls
+COPY crates/backend/migrations /migrations
+CMD ["sqlx", "migrate", "run", "--source", "/migrations"]
+
 FROM nginx:alpine-slim AS frontend
 
 RUN rm -rf /usr/share/nginx/html/*
